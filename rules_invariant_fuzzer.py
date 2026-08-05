@@ -3,7 +3,7 @@ import json
 import random
 import time
 
-import GrandmasterEuchreFinalAttempt as app
+import BotEuchreGUI as app
 
 
 def validate_state(state, played_cards):

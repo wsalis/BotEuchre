@@ -22,7 +22,7 @@ import uuid
 import torch
 import torch.multiprocessing as mp
 
-from GrandmasterEuchreFinalAttempt import (
+from BotEuchreGUI import (
     ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH,
     CheemsNeuralNet, CommitteeNeuralNet, DATA_SCHEMA_VERSION,
     HEADLESS_TOURNAMENT_PROFILES, NODE_ADHOC_HISTORY_PATH,

@@ -19,7 +19,7 @@ import tkinter as tk
 import uuid
 from tkinter import filedialog, messagebox, ttk
 
-from GrandmasterEuchreFinalAttempt import (
+from BotEuchreGUI import (
     DATA_SCHEMA_VERSION, HEADLESS_TOURNAMENT_PROFILES, HELP_TOPICS,
     NODE_ADHOC_HISTORY_PATH, NODE_DEAL_LEDGER_PATH, NODE_ID, NODE_STATE_DIR,
     atomic_write_json, load_versioned_list, load_versioned_mapping,

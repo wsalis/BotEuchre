@@ -8,7 +8,7 @@ import time
 
 import torch
 
-import GrandmasterEuchreFinalAttempt as app
+import BotEuchreGUI as app
 import rules_invariant_fuzzer
 import soak_test_headless
 
@@ -69,7 +69,7 @@ def run_self_test(include_neural=True):
             log_path = os.path.join(directory, "neural-smoke.jsonl")
             command = [
                 sys.executable, os.path.join(app.SCRIPT_DIR, "adhoc_headless_evaluation.py"),
-                app.ARBITER_WEIGHTS_PATH, os.path.join(app.SCRIPT_DIR, "PriorGenCheems.pth"),
+                "Arbiter", "Ironclad",
                 "--hands", "2", "--mcts-a", "1", "--mcts-b", "1",
                 "--worker-multiplier", "1", "--seed", "424242",
                 "--label", "pre-release-self-test", "--log", log_path,

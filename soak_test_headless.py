@@ -4,7 +4,7 @@ import random
 import time
 import tracemalloc
 
-import GrandmasterEuchreFinalAttempt as app
+import BotEuchreGUI as app
 
 
 def run_soak(hand_count=10000, seed=20260801):

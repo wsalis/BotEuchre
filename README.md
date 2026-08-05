@@ -1,11 +1,14 @@
 ﻿# Bot Euchre
 
-Project status: Actively maintained public gameplay release.
+Project status: actively maintained public gameplay release.
 
-Bot Euchre is a desktop Euchre game, trainer, AI laboratory, and replay tool built
+Bot Euchre is a desktop Euchre game, trainer, replay tool, and AI laboratory built
 with Python, Tkinter, PyTorch, and Monte Carlo tree search. It combines three trained
-neural personalities with ensembles, score-aware routers, experimental bots,
-scenario drills, coaching tools, and profile-versus-profile tournaments.
+neural personalities with ensembles, score-aware routers, scenario drills, coaching
+tools, and profile-versus-profile tournaments.
+
+This repository is the public gameplay and evaluation release: launch the GUI, play
+full matches, inspect decisions, run tournaments, and benchmark the shipped profiles.
 
 The canonical application is:
 
@@ -19,8 +22,8 @@ interface.
 ## 30-Second Run
 
 1. Open PowerShell in this folder.
-2. Install dependencies: `py -3 -m pip install torch numpy`
-3. Launch: `py -3 .\GrandmasterEuchreFinalAttempt.py`
+2. Install dependencies: `py -3 -m pip install -r .\requirements.txt`
+3. Launch: `py -3 .\BotEuchreGUI.py`
 
 If all three checkpoint files are present, the setup window opens and you can start
 playing immediately.
@@ -29,7 +32,7 @@ playing immediately.
 
 | File | Required | Purpose |
 |---|---|---|
-| `GrandmasterEuchreFinalAttempt.py` | Yes | Main desktop application entry point. |
+| `BotEuchreGUI.py` | Yes | Main desktop application entry point. |
 | `arbiter_weights.pth` | Yes | Arbiter balanced neural checkpoint. |
 | `ironclad_final_gen18.pth` | Yes | Ironclad conservative neural checkpoint. |
 | `kyle_weights.pth` | Yes | Kyle aggressive neural checkpoint. |
@@ -40,9 +43,9 @@ playing immediately.
 
 ## Troubleshooting Startup
 
-- If launch fails with missing `torch` or `numpy`, run `py -3 -m pip install torch numpy` and retry.
+- If launch fails with missing `torch` or `numpy`, run `py -3 -m pip install -r .\requirements.txt` and retry.
 - If the app reports missing checkpoints, verify `arbiter_weights.pth`, `ironclad_final_gen18.pth`, and `kyle_weights.pth` are in the repository root.
-- If nothing opens after launch, run from a terminal to see errors directly: `py -3 .\GrandmasterEuchreFinalAttempt.py`.
+- If nothing opens after launch, run from a terminal to see errors directly: `py -3 .\BotEuchreGUI.py`.
 - If a stale session causes issues, choose a fresh start when prompted or delete `node_state/<your-node>/bot_euchre_autosave.json`.
 
 ## Quick Start
@@ -50,14 +53,14 @@ playing immediately.
 From PowerShell in the repository root:
 
 ```powershell
-py -3 .\GrandmasterEuchreFinalAttempt.py
+py -3 .\BotEuchreGUI.py
 ```
 
 The neural profiles require Python 3, PyTorch, and NumPy. Tkinter is normally
 included with the standard Windows Python installer.
 
 ```powershell
-py -3 -m pip install torch numpy
+py -3 -m pip install -r .\requirements.txt
 ```
 
 The application expects these checkpoints:
@@ -72,16 +75,15 @@ CPU inference works. CUDA or Apple MPS is used automatically when available.
 
 ## Known Limitations
 
-- Launch helper scripts in this repo are Windows `.bat` files.
 - Search speed depends heavily on hardware; deeper presets can be slow on CPU-only systems.
 - The first run can take longer while PyTorch initializes and checkpoints are loaded.
 - This release ships fixed checkpoints and gameplay/evaluation tooling, not the full training pipeline.
 
 ## Public Release Scope
 
-This repository is a trimmed, shareable release focused on gameplay and evaluation.
-It includes the canonical GUI, three production checkpoints, and the companion
-headless/self-test scripts launched by the GUI.
+This repository is the public gameplay and evaluation release. It includes the
+canonical GUI, three production checkpoints, and the companion headless/self-test
+scripts launched by the GUI.
 
 It does not include the full self-play training pipeline, generation scripts, or
 model-archive workflow from the larger development repository.
@@ -105,7 +107,7 @@ quick reuse. Trainer Mode remains optional and is unchecked by default.
 
 ### Arbiter
 
-The balanced Vanilla profile uses the promoted generation 50 checkpoint. It is the
+The balanced Arbiter profile uses the promoted generation 50 checkpoint. It is the
 general-purpose baseline: neither deliberately conservative nor deliberately
 aggressive. The other trained personalities were branched from this lineage.
 
@@ -142,13 +144,13 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | Ironclad | Frozen conservative neural specialist. |
 | Kyle | Aggressive neural specialist. |
 | Committee | Averages policy probabilities and value estimates from all three trained brains. |
-| The Closer | Routes to Ironclad while leading or near victory, Kyle while trailing, and Vanilla in balanced games. |
+| The Closer | Routes to Ironclad while leading or near victory, Kyle while trailing, and Arbiter in balanced games. |
 | Counterpuncher | Uses Kyle while calling or supporting a contract, then Ironclad while defending. |
 | Unanimous Council | Reinforces moves independently preferred by all three brains and searches more deeply. |
 | Risk Manager | Uses Ironclad evaluations and favors the safer alternative when the top choices are close. |
 | Scoreboard General | Changes call and loner margins according to score and seat. |
 | Copycat | Learns from the human's passes, calls, loners, and card aggression, then adopts the nearest trained style. |
-| Wildcard | Randomly selects Vanilla, Ironclad, or Kyle at the start of each hand. |
+| Wildcard | Randomly selects Arbiter, Ironclad, or Kyle at the start of each hand. |
 | The MC | Pure information-set MCTS without a neural checkpoint. |
 | Card Counter | Legal-information MCTS that searches more deeply as public card information accumulates. |
 | Saboteur | Evaluates with Ironclad and deliberately chooses its worst-ranked legal action. |
@@ -217,12 +219,16 @@ continue the saved session or discard it and open a fresh setup.
 
 On a shared drive, volatile state is isolated under `node_state/<computer-name>`.
 Set `BOT_EUCHRE_NODE_ID` before launch to choose a stable name explicitly.
-For a no-terminal launch, use `Launch Bot Euchre Instance.bat` and enter a node ID
-when prompted. Choose `Y` at the auto-claim prompt to have that instance start up
-and claim the next open league job automatically. Run it again with a different
-node ID for each extra instance.
-The launcher can also ask how many workers to create and will auto-suffix them as
-`<prefix>-1`, `<prefix>-2`, and so on so each node stays unique.
+To start a named instance from PowerShell, set the environment variable before
+launch:
+
+```powershell
+$env:BOT_EUCHRE_NODE_ID = "league-1"
+py -3 .\BotEuchreGUI.py
+```
+
+Launch additional workers with different node IDs so each instance keeps its own
+autosave, queue state, and league claims.
 
 Returning to the Main Menu deliberately clears the current autosave after
 confirmation. Closing the application normally preserves it, which also provides
@@ -514,10 +520,10 @@ copy is created.
 
 ## Repository Notes
 
-This repository is a trimmed, shareable release: it contains the canonical GUI, its
-three checkpoints, and the companion evaluation/test scripts the GUI launches. The
-full training pipeline (self-play generation, checkpoint promotion, data-sweeping,
-and visualization scripts) is not included here.
+This public repository contains the canonical GUI, its three checkpoints, and the
+companion evaluation/test scripts the GUI launches. The full training pipeline
+(self-play generation, checkpoint promotion, data-sweeping, and visualization
+scripts) is not included here.
 
 ## Validation
 
@@ -535,7 +541,7 @@ Use `--skip-neural` for the fast checks only.
 Compile the application:
 
 ```powershell
-py -3 -m py_compile .\GrandmasterEuchreFinalAttempt.py
+py -3 -m py_compile .\BotEuchreGUI.py
 ```
 
 The suite also validates `golden_replay_cases.json`, including deterministic deck

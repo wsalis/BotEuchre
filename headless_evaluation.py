@@ -29,7 +29,7 @@ import torch.multiprocessing as mp
 torch.set_grad_enabled(False)
 torch.set_num_threads(1)
 
-from GrandmasterEuchreFinalAttempt import (
+from BotEuchreGUI import (
     SimState, Card, CheemsNeuralNet, encode_state_to_tensor,
     ALL_DECK_KEYS, SUITS_T, RANKS_T, SAME_COLOR_T, HAS_TORCH,
     POLICY_SIZE, BID_PASS, run_auction, legal_bid_actions,

@@ -1,7 +1,7 @@
 ﻿# Kyle Model Notes
 
 Kyle is the aggressive neural specialist derived from the balanced Arbiter lineage.
-In this public release, Kyle is shipped as a frozen inference checkpoint.
+In this public release, it is distributed as a frozen gameplay/evaluation checkpoint.
 
 ## Checkpoint
 

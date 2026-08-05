@@ -1,7 +1,8 @@
 ﻿# Ironclad Model Notes
 
 Ironclad is the conservative neural specialist derived from the balanced Arbiter
-lineage. In this public release, Ironclad is shipped as a frozen inference checkpoint.
+lineage. In this public release, it is distributed as a frozen gameplay/evaluation
+checkpoint.
 
 ## Checkpoint
 
