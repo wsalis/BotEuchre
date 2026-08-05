@@ -157,6 +157,8 @@ The balanced Arbiter profile uses the promoted generation 50 checkpoint. It is t
 general-purpose baseline: neither deliberately conservative nor deliberately
 aggressive. The other trained personalities were branched from this lineage.
 
+50 Generations of training here constitutes about 5 Million hands of Euchre (about 100k hands per generation)
+
 ### Ironclad
 
 Ironclad is the conservative specialist. Its branch used positive call margins in
@@ -164,6 +166,12 @@ self-play to demand stronger evidence before making voluntary calls. Generation 
 was selected as the final checkpoint and frozen after the branch evaluation cycle.
 Its priorities are disciplined bidding, lower euchre exposure, and protecting a
 lead.
+
+In testing both headless tournaments and personal play, my opinion is that Ironclad is the strongest AI bot in the game.
+
+This particular generation of Ironclad is derived from 18 generations of higher confidence training, originating from the Generation 50 Arbiter brain, so about 6.8 million hands of Euchre.
+
+This is the one AI profile in the game that will not only reliably beat the Arbiter base brain, but also a mathematically perfect MCTS heuristic bot (The MC) over the course of thousands of games.
 
 See [README_IRONCLAD.md](README_IRONCLAD.md) for profile notes, checkpoint fingerprint,
 and provenance summary.
@@ -174,6 +182,8 @@ Kyle is the aggressive specialist. It began from the frozen balanced Gen50 seed 
 uses training incentives that favor thinner partnered calls while avoiding an
 equally large increase in reckless loners. It is designed to press scoring chances,
 find comeback calls, and challenge cautious opponents.
+
+Kyle only underwent a few generations of training. I pulled the plug after a few generations because it started regressing heavily.
 
 See [README_KYLE.md](README_KYLE.md) for profile notes, checkpoint fingerprint,
 and provenance summary.
