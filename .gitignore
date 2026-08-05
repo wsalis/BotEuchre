@@ -1,0 +1,16 @@
+__pycache__/
+*.pyc
+node_state/
+bot_euchre_diagnostics/
+backups/
+bot_euchre_settings.json
+bot_euchre_autosave.json
+bot_euchre_tournament_history.jsonl
+bot_euchre_league_state.json
+bot_euchre_headless_jobs.json
+bot_euchre_tournament_lab_settings.json
+adhoc_evaluation_history.jsonl
+player_stats.json
+*.egg-info/
+.venv/
+venv/

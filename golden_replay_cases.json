@@ -1,0 +1,49 @@
+{
+  "format": "bot-euchre-golden-replays-v1",
+  "deals": [
+    {
+      "name": "canonical mirrored benchmark seed",
+      "seed": 424242,
+      "deck": ["Q♦", "9♠", "A♦", "J♠", "Q♠", "Q♥", "9♣", "K♣", "10♦", "9♦", "A♠", "J♣", "A♥", "10♣", "J♦", "K♠", "9♥", "Q♣", "10♠", "J♥", "A♣", "K♥", "10♥", "K♦"],
+      "deck_hash": "a70b4fe6a56a18e1"
+    }
+  ],
+  "legal_moves": [
+    {
+      "name": "left bower follows trump",
+      "trump": "♥",
+      "current_turn": 0,
+      "trick": [[1, "9♥"]],
+      "hand": ["J♦", "A♣", "10♥"],
+      "expected": ["J♦", "10♥"]
+    },
+    {
+      "name": "void permits any discard",
+      "trump": "♠",
+      "current_turn": 0,
+      "trick": [[3, "A♦"]],
+      "hand": ["9♣", "J♠", "K♥"],
+      "expected": ["9♣", "J♠", "K♥"]
+    }
+  ],
+  "tricks": [
+    {
+      "name": "left bower beats ace of trump",
+      "trump": "♥",
+      "plays": [[0, "A♥"], [1, "J♦"], [2, "J♥"], [3, "9♥"]],
+      "winner": 2
+    },
+    {
+      "name": "off-suit ace cannot beat led suit",
+      "trump": "♠",
+      "plays": [[1, "10♦"], [2, "A♣"], [3, "K♦"], [0, "9♥"]],
+      "winner": 3
+    }
+  ],
+  "scores": [
+    {"name": "ordinary make", "caller": 0, "loner": false, "team1_tricks": 3, "team2_tricks": 2, "winner": 1, "points": 1},
+    {"name": "ordinary march", "caller": 1, "loner": false, "team1_tricks": 0, "team2_tricks": 5, "winner": 2, "points": 2},
+    {"name": "loner march", "caller": 0, "loner": true, "team1_tricks": 5, "team2_tricks": 0, "winner": 1, "points": 4},
+    {"name": "caller euchred", "caller": 0, "loner": false, "team1_tricks": 2, "team2_tricks": 3, "winner": 2, "points": 2}
+  ]
+}
