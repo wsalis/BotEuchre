@@ -119,6 +119,8 @@ was selected as the final checkpoint and frozen after the branch evaluation cycl
 Its priorities are disciplined bidding, lower euchre exposure, and protecting a
 lead.
 
+In my testing and my own personal opinion, Ironclad is probably the strongest AI bot in the game. It generally comes out on top on win rate and net points.
+
 See [README_IRONCLAD.md](README_IRONCLAD.md) for profile notes, checkpoint fingerprint,
 and provenance summary.
 
