@@ -10,6 +10,52 @@ tools, and profile-versus-profile tournaments.
 This repository is the public gameplay and evaluation release: launch the GUI, play
 full matches, inspect decisions, run tournaments, and benchmark the shipped profiles.
 
+## First-Time Setup For Windows
+
+If you have never used Python, Command Prompt, or GitHub before, follow these exact
+steps.
+
+1. Go to this repository on GitHub.
+2. Click the green **Code** button.
+3. If you do not use Git, choose **Download ZIP**.
+4. Extract the ZIP to a folder such as `C:\Users\YourName\BotEuchre`.
+5. Install Python 3 from [python.org](https://www.python.org/downloads/windows/).
+6. During installation, check **Add Python to PATH**.
+7. Open the extracted `BotEuchre` folder in File Explorer.
+8. Click the address bar, type `cmd`, and press `Enter`.
+9. In the Command Prompt window that opens, run:
+
+```bat
+py -3 -m pip install -r requirements.txt
+```
+
+10. After that finishes, run the self-test:
+
+```bat
+py -3 pre_release_self_test.py
+```
+
+11. If the self-test ends with `"ok": true`, start the game:
+
+```bat
+py -3 BotEuchreGUI.py
+```
+
+12. The game window should open.
+
+If `py` is not recognized, close Command Prompt, reopen it, and try again. If it
+still does not work, restart Windows once after installing Python.
+
+If you already know Git and want the clone version instead of ZIP download, use:
+
+```bat
+git clone https://github.com/<your-user>/<your-repo>.git
+cd BotEuchre
+py -3 -m pip install -r requirements.txt
+py -3 pre_release_self_test.py
+py -3 BotEuchreGUI.py
+```
+
 The canonical application is:
 
 ```text
@@ -118,8 +164,6 @@ self-play to demand stronger evidence before making voluntary calls. Generation 
 was selected as the final checkpoint and frozen after the branch evaluation cycle.
 Its priorities are disciplined bidding, lower euchre exposure, and protecting a
 lead.
-
-In my testing and my own personal opinion, Ironclad is probably the strongest AI bot in the game. It generally comes out on top on win rate and net points.
 
 See [README_IRONCLAD.md](README_IRONCLAD.md) for profile notes, checkpoint fingerprint,
 and provenance summary.
