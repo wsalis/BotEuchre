@@ -10,7 +10,7 @@ scenario drills, coaching tools, and profile-versus-profile tournaments.
 The canonical application is:
 
 ```text
-GrandmasterEuchreFinalAttempt.py
+BotEuchreGUI.py
 ```
 
 Despite the historical filename, the application is branded **Bot Euchre** in the
