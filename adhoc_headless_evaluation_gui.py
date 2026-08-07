@@ -215,6 +215,32 @@ def _shared_queue_purge(path, include_running=False, stale_running_only=False):
     return counts
 
 
+def _shared_queue_retry_failed(path):
+    _shared_queue_init(path)
+    count = 0
+    def operation():
+        nonlocal count
+        now = time.time()
+        with _sqlite_connect(path) as conn:
+            count = conn.execute(
+                """
+                UPDATE queue_jobs
+                SET status='queued',
+                    started_at=NULL,
+                    finished_at=NULL,
+                    return_code=NULL,
+                    failure_reason=NULL,
+                    lease_owner=NULL,
+                    lease_expires_at=NULL,
+                    created_at=?
+                WHERE status='failed'
+                """,
+                (now,),
+            ).rowcount
+    _run_with_sqlite_retry(operation)
+    return count
+
+
 def _shared_queue_claim_next(path, owner_id, lease_seconds):
     _shared_queue_init(path)
     claimed = None
@@ -390,6 +416,7 @@ class EvalGui(tk.Tk):
         self.last_lease_heartbeat_at = 0.0
 
         self.competitor_options = list(HEADLESS_TOURNAMENT_PROFILES)
+        self.round_robin_profiles = self._load_round_robin_profiles()
         self.model_a_var = tk.StringVar(value=self.default_model_a())
         self.model_b_var = tk.StringVar(value=self.default_model_b())
         self.randomize_teams_var = tk.BooleanVar(
@@ -409,6 +436,8 @@ class EvalGui(tk.Tk):
             value=self.lab_settings.get("round_robin_hands", "200"))
         self.round_robin_label_prefix_var = tk.StringVar(
             value=self.lab_settings.get("round_robin_label_prefix", "round_robin"))
+        self.round_robin_profiles_var = tk.StringVar(
+            value=self._round_robin_profiles_summary())
         self.shared_queue_enabled_var = tk.BooleanVar(
             value=bool(self.lab_settings.get("shared_queue_enabled", False)))
         self.shared_queue_path_var = tk.StringVar(
@@ -452,6 +481,143 @@ class EvalGui(tk.Tk):
 
     def default_model_b(self):
         return "Ironclad"
+
+    def _default_round_robin_profiles(self):
+        default_profiles = [
+            profile for profile in self.competitor_options
+            if profile not in {"Noob", "Saboteur"}]
+        if len(default_profiles) >= 2:
+            return default_profiles
+        return list(self.competitor_options)
+
+    def _load_round_robin_profiles(self):
+        saved = self.lab_settings.get("round_robin_profiles")
+        if not isinstance(saved, list):
+            return self._default_round_robin_profiles()
+        selected = [
+            profile for profile in saved if profile in self.competitor_options]
+        if len(selected) < 2:
+            return self._default_round_robin_profiles()
+        return selected
+
+    def _round_robin_profiles_summary(self):
+        selected_count = len(self.round_robin_profiles)
+        total_count = len(self.competitor_options)
+        excluded = [
+            p for p in self.competitor_options if p not in self.round_robin_profiles]
+        if excluded:
+            excluded_text = ", ".join(excluded[:3])
+            if len(excluded) > 3:
+                excluded_text += ", ..."
+            return (f"{selected_count}/{total_count} selected "
+                    f"(excluding {excluded_text})")
+        return f"{selected_count}/{total_count} selected"
+
+    def apply_serious_round_robin_profiles(self):
+        self.round_robin_profiles = self._default_round_robin_profiles()
+        self.round_robin_profiles_var.set(self._round_robin_profiles_summary())
+        self.save_runtime_preferences()
+        self.append_output(
+            "\n[QUEUE] Round robin profile preset applied: Serious Profiles "
+            "(Noob and Saboteur excluded).\n")
+
+    def _open_round_robin_profile_picker(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Round Robin Profiles")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.geometry("460x560")
+        dialog.minsize(420, 460)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            frame,
+            text="Choose which profiles to include in Queue Full Round Robin:").grid(
+                row=0, column=0, sticky="w")
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        canvas = tk.Canvas(list_frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        checks_frame = ttk.Frame(canvas)
+        checks_frame.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=checks_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        selected = set(self.round_robin_profiles)
+        vars_by_profile = {}
+        for profile in self.competitor_options:
+            var = tk.BooleanVar(value=profile in selected)
+            vars_by_profile[profile] = var
+            ttk.Checkbutton(
+                checks_frame, text=profile, variable=var).pack(anchor="w", pady=2)
+
+        def select_defaults():
+            defaults = set(self._default_round_robin_profiles())
+            for profile, var in vars_by_profile.items():
+                var.set(profile in defaults)
+
+        def select_serious_profiles():
+            serious = {
+                profile for profile in self.competitor_options
+                if profile not in {"Noob", "Saboteur"}}
+            for profile, var in vars_by_profile.items():
+                var.set(profile in serious)
+
+        def select_all():
+            for var in vars_by_profile.values():
+                var.set(True)
+
+        def select_none():
+            for var in vars_by_profile.values():
+                var.set(False)
+
+        def apply_selection():
+            chosen = [
+                profile for profile in self.competitor_options
+                if vars_by_profile[profile].get()]
+            if len(chosen) < 2:
+                messagebox.showerror(
+                    "Round Robin Profiles",
+                    "Select at least two profiles for round robin queueing.")
+                return
+            self.round_robin_profiles = chosen
+            self.round_robin_profiles_var.set(self._round_robin_profiles_summary())
+            self.save_runtime_preferences()
+            dialog.destroy()
+
+        presets_bar = ttk.Frame(frame)
+        presets_bar.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(presets_bar, text="Defaults", command=select_defaults).pack(
+            side=tk.LEFT)
+        ttk.Button(
+            presets_bar, text="Serious Profiles",
+            command=select_serious_profiles).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(presets_bar, text="All", command=select_all).pack(
+            side=tk.LEFT, padx=(8, 0))
+        ttk.Button(presets_bar, text="None", command=select_none).pack(
+            side=tk.LEFT, padx=(8, 0))
+
+        action_bar = ttk.Frame(frame)
+        action_bar.grid(row=3, column=0, sticky="ew")
+        ttk.Label(
+            action_bar, text="Tip: Enter applies, Esc cancels.").pack(
+                side=tk.LEFT)
+        ttk.Button(action_bar, text="Cancel", command=dialog.destroy).pack(
+            side=tk.RIGHT)
+        ttk.Button(action_bar, text="OK / Apply", command=apply_selection).pack(
+            side=tk.RIGHT, padx=(0, 8))
+
+        dialog.bind("<Return>", lambda _e: apply_selection())
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
 
     def create_widgets(self):
         outer = ttk.Frame(self, padding=14)
@@ -501,6 +667,18 @@ class EvalGui(tk.Tk):
         ttk.Entry(runtime, textvariable=self.round_robin_hands_var, width=12).grid(row=1, column=1, sticky="w", pady=4)
         ttk.Label(runtime, text="Round robin label prefix").grid(row=1, column=2, sticky="w", padx=(24, 8), pady=4)
         ttk.Entry(runtime, textvariable=self.round_robin_label_prefix_var).grid(row=1, column=3, sticky="ew", pady=4)
+        ttk.Label(runtime, text="Round robin profiles").grid(
+            row=8, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Label(runtime, textvariable=self.round_robin_profiles_var).grid(
+            row=8, column=1, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            runtime, text="Serious Profiles",
+            command=self.apply_serious_round_robin_profiles).grid(
+                row=8, column=3, sticky="w", padx=(0, 110), pady=4)
+        ttk.Button(
+            runtime, text="Choose Profiles",
+            command=self._open_round_robin_profile_picker).grid(
+                row=8, column=3, sticky="e", pady=4)
 
         ttk.Label(runtime, text="Worker multiplier").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(runtime, textvariable=self.worker_multiplier_var, width=12).grid(row=2, column=1, sticky="w", pady=4)
@@ -579,6 +757,9 @@ class EvalGui(tk.Tk):
         self.job_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(
             queue_frame, text="Remove", command=self.remove_selected_job).pack(
+                side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(
+            queue_frame, text="Retry Failed", command=self.retry_failed_jobs).pack(
                 side=tk.RIGHT, padx=(8, 0))
         ttk.Button(
             queue_frame, text="Purge Queue", command=self.purge_queue).pack(
@@ -757,6 +938,7 @@ class EvalGui(tk.Tk):
             "randomize_teams": self.randomize_teams_var.get(),
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
+            "round_robin_profiles": list(self.round_robin_profiles),
             "shared_queue_enabled": self.shared_queue_enabled_var.get(),
             "shared_queue_path": self.shared_queue_path_var.get().strip(),
             "shared_queue_lease_minutes": self.shared_queue_lease_minutes_var.get().strip(),
@@ -874,10 +1056,13 @@ class EvalGui(tk.Tk):
             messagebox.showerror("Invalid Round Robin Settings", str(error))
             return
 
-        profiles = list(self.competitor_options)
+        profiles = [
+            profile for profile in self.round_robin_profiles
+            if profile in self.competitor_options]
         if len(profiles) < 2:
             messagebox.showerror(
-                "Round Robin", "At least two tournament profiles are required.")
+                "Round Robin",
+                "At least two selected round robin profiles are required.")
             return
 
         label_prefix = self.round_robin_label_prefix_var.get().strip() or "round_robin"
@@ -918,11 +1103,12 @@ class EvalGui(tk.Tk):
         total_games = created * hands
         self.append_output(
             f"\n[QUEUE] Round robin queued: {created} matchups, "
-            f"{hands} games each ({total_games} total scheduled games).\n")
+            f"{hands} games each ({total_games} total scheduled games) "
+            f"from {len(profiles)} selected profiles.\n")
         messagebox.showinfo(
             "Round Robin Queued",
             f"Queued {created} matchups with {hands} games each "
-            f"({total_games} total games).")
+            f"({total_games} total games) from {len(profiles)} selected profiles.")
 
     def refresh_job_queue(self):
         if not hasattr(self, "job_tree"):
@@ -1047,6 +1233,31 @@ class EvalGui(tk.Tk):
         messagebox.showinfo(
             "Purge Queue",
             f"Removed {removed} jobs. Running jobs kept: {len(kept)}.")
+
+    def retry_failed_jobs(self):
+        if self._shared_queue_enabled():
+            retried = _shared_queue_retry_failed(self._shared_queue_path())
+            self.jobs = _shared_queue_list(self._shared_queue_path())
+            self.refresh_job_queue()
+            messagebox.showinfo(
+                "Retry Failed",
+                f"Reset {retried} failed shared-queue jobs to queued.")
+            return
+
+        retried = 0
+        for job in self.jobs:
+            if job.get("status") == "failed":
+                job["status"] = "queued"
+                job.pop("started_at", None)
+                job.pop("finished_at", None)
+                job.pop("return_code", None)
+                job.pop("failure_reason", None)
+                retried += 1
+        save_job_queue(self.jobs)
+        self.refresh_job_queue()
+        messagebox.showinfo(
+            "Retry Failed",
+            f"Reset {retried} failed local jobs to queued.")
 
     def launch_command(self, command):
         self.set_running(True)

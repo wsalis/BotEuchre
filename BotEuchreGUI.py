@@ -1312,6 +1312,7 @@ AI_PROFILE_CHOICES = {
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Card Counter (Adaptive MCTS)": "Uses legal-information MCTS and searches deeper as more cards become publicly known.",
+    "Hoyle (Strict Conventional)": "Uses strict convention-first heuristics for bidding, discard, and play with no neural evaluation.",
     "Saboteur (Worst-Ranked Ironclad)": "Evaluates with Ironclad, then deliberately chooses its worst-ranked legal action.",
     "Noob (0 Iteration Bot)": "Uses simple deterministic and random fallbacks without meaningful tree search.",
 }
@@ -1321,7 +1322,7 @@ NEURAL_PROFILES = {
     "Scoreboard General", "Copycat", "Wildcard", "Saboteur",
 }
 HEADLESS_MCTS_PROFILES = {
-    "The MC", "Card Counter",
+    "The MC", "Card Counter", "Hoyle",
 }
 TOURNAMENT_PROFILES = tuple(label.split(" (")[0] for label in AI_PROFILE_CHOICES)
 HEADLESS_TOURNAMENT_PROFILES = tuple(
@@ -1348,7 +1349,7 @@ def resolve_tournament_seed(
     except (TypeError, ValueError) as error:
         raise ValueError("Tournament seed must be a whole number.") from error
 
-HEURISTIC_PROFILES = {"The MC"}
+HEURISTIC_PROFILES = {"The MC", "Hoyle"}
 WILDCARD_PROFILES = ("Arbiter", "Ironclad", "Kyle")
 PROFILE_CATEGORIES = {
     "Arbiter": "Base Neural", "Ironclad": "Base Neural",
@@ -1357,7 +1358,8 @@ PROFILE_CATEGORIES = {
     "Counterpuncher": "Router", "Risk Manager": "Router",
     "Scoreboard General": "Router", "Copycat": "Learner",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
-    "Card Counter": "Adaptive MCTS", "Saboteur": "Novelty",
+    "Card Counter": "Adaptive MCTS", "Hoyle": "Conventional",
+    "Saboteur": "Novelty",
     "Noob": "Baseline",
 }
 HELP_TOPICS = [
@@ -3127,6 +3129,12 @@ class ISMCTS_Multiprocessing_Agent:
 
     def get_best_move(self, ui_game, player_idx, return_confidence=False, override_iters=None, return_all_moves=False, prepacked_state=None):
         profile = ui_game.ai_profiles.get(str(player_idx), "Human")
+
+        if profile == "Hoyle":
+            if return_all_moves:
+                return ui_game.get_hoyle_ranked_moves(player_idx)
+            best_move, conf = ui_game.get_hoyle_best_move(player_idx)
+            return (best_move, conf) if return_confidence else best_move
         
         if profile in NEURAL_PROFILES:
             if return_all_moves:
@@ -3763,6 +3771,125 @@ class EuchreGame(tk.Tk):
             return self.team1_score, self.team2_score
         return self.team2_score, self.team1_score
 
+    def _hoyle_bid_decision(self, player_idx, round_num, is_stuck):
+        hand = self.hands[player_idx]
+        suits = [self.up_card.suit] if round_num == 1 else [
+            s for s in SUITS_T if s != self.up_card.suit]
+        best_suit = suits[0]
+        best_score = -999.0
+        for suit in suits:
+            score, _ = self.calculate_hand_power(hand, suit)
+            # Hoyle convention: mild preference for "next" in round two.
+            if round_num == 2 and suit == SAME_COLOR_T[self.up_card.suit]:
+                score += 0.35
+            if score > best_score:
+                best_score = score
+                best_suit = suit
+
+        off_aces = sum(
+            1 for card in hand
+            if self.get_effective_suit(card) != best_suit and card.rank == 'A')
+        call_threshold = 6.2
+        if round_num == 2:
+            call_threshold -= 0.2
+        if is_stuck:
+            call_threshold = min(call_threshold, 5.7)
+        if best_score < call_threshold and not is_stuck:
+            return "Pass", best_suit, False
+
+        # Strictly conservative loners: require a true monster with outside control.
+        is_loner = best_score >= 8.8 and off_aces >= 1
+        return "Call", best_suit, is_loner
+
+    def _hoyle_move_power(self, card, led_suit):
+        rank_base_vals = {'9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
+        pwr = rank_base_vals[card.rank]
+        eff_s = self.get_effective_suit(card)
+        if card.rank == 'J' and card.suit == self.trump_suit:
+            pwr += 500
+        elif card.rank == 'J' and card.suit == SAME_COLOR_T[self.trump_suit]:
+            pwr += 400
+        elif eff_s == self.trump_suit:
+            pwr += 100
+        elif eff_s == led_suit:
+            pwr += 50
+        else:
+            pwr = 0
+        return pwr
+
+    def get_hoyle_ranked_moves(self, player_idx):
+        hand = self.hands[player_idx]
+        legal_indices = self.get_legal_moves(hand)
+        if not legal_indices:
+            return []
+        if len(legal_indices) == 1:
+            return [(legal_indices[0], 100.0)]
+
+        led_suit = self.get_effective_suit(self.trick[0][1]) if self.trick else None
+        partner_idx = (player_idx + 2) % 4
+        trick_target = 2 if self.is_loner else 3
+        ranked = []
+
+        if self.trick:
+            highest_power = -1
+            winning_player = -1
+            for p_idx, c in self.trick:
+                pwr = self._hoyle_move_power(c, led_suit)
+                if pwr > highest_power:
+                    highest_power = pwr
+                    winning_player = p_idx
+
+            for idx in legal_indices:
+                card = hand[idx]
+                pwr = self._hoyle_move_power(card, led_suit)
+                can_win = pwr > highest_power
+                if can_win:
+                    # Prefer the lowest card that still wins.
+                    score = 70.0 - pwr * 0.01
+                else:
+                    # Prefer low throwaways when not winning.
+                    score = 50.0 - pwr * 0.01
+
+                # If partner is already winning and we are last, avoid overtake.
+                if (winning_player == partner_idx and len(self.trick) == trick_target
+                        and can_win):
+                    score -= 25.0
+
+                ranked.append((idx, score))
+        else:
+            # Opening lead conventions: caller side likes pulling trump, defenders
+            # prefer off-suit A leads when available.
+            caller_team = 1 if self.caller_idx in [0, 2] else 2
+            my_team = 1 if player_idx in [0, 2] else 2
+            suit_counts = {}
+            for c in hand:
+                suit_counts[self.get_effective_suit(c)] = (
+                    suit_counts.get(self.get_effective_suit(c), 0) + 1)
+
+            for idx in legal_indices:
+                card = hand[idx]
+                eff = self.get_effective_suit(card)
+                score = 50.0
+                if my_team == caller_team and eff == self.trump_suit:
+                    score += 15.0
+                if my_team != caller_team and eff != self.trump_suit and card.rank == 'A':
+                    score += 20.0
+                if eff != self.trump_suit and suit_counts.get(eff, 0) == 1:
+                    score += 4.0
+                score += {'9': 1, '10': 2, 'J': 3, 'Q': 4, 'K': 5, 'A': 6}[card.rank] * 0.3
+                ranked.append((idx, score))
+
+        ranked.sort(key=lambda item: item[1], reverse=True)
+        if not ranked:
+            return [(idx, 100.0 / len(legal_indices)) for idx in legal_indices]
+        top_score = ranked[0][1]
+        # Convert heuristic scores to a simple confidence-like scale.
+        out = []
+        for idx, score in ranked:
+            confidence = max(0.0, min(100.0, 50.0 + (score - top_score)))
+            out.append((idx, confidence))
+        return out
+
     def _build_live_play_snapshot(self, player_idx, known_hands=None):
         sim_state = SimState(
             self.trump_suit,
@@ -3936,6 +4063,15 @@ class EuchreGame(tk.Tk):
         
         fallback = random.choice(legal_indices)
         return fallback, 0.0
+
+    def get_hoyle_best_move(self, player_idx):
+        legal_indices = self.get_legal_moves(self.hands[player_idx])
+        if not legal_indices:
+            return 0, 0.0
+        ranked = self.get_hoyle_ranked_moves(player_idx)
+        if ranked:
+            return ranked[0]
+        return random.choice(legal_indices), 0.0
 
     def sort_hand(self, hand):
         def hand_sort_key(card):
@@ -5169,6 +5305,7 @@ class EuchreGame(tk.Tk):
             label = self._profile_display_label(profile)
             description = AI_PROFILE_CHOICES.get(label, "")
             route = "Pure MCTS" if profile in {"The MC", "Card Counter"} else (
+                "Conventional heuristics" if profile == "Hoyle" else
                 "Zero-search fallback" if profile == "Noob" else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
@@ -7105,6 +7242,11 @@ class EuchreGame(tk.Tk):
         suits_to_check = [self.up_card.suit] if round_num == 1 else [s for s in SUITS_T if s != self.up_card.suit]
         is_stuck = (round_num == 2 and self.passed_count == 3 and self.dealer_idx == player_idx)
         profile = self.ai_profiles.get(str(player_idx), "Human")
+
+        if profile == "Hoyle":
+            action, suit, is_loner = self._hoyle_bid_decision(
+                player_idx, round_num, is_stuck)
+            return action, suit, is_loner, 100.0, 3.0, is_stuck
         
         if profile in NEURAL_PROFILES:
             return self._simulate_cheems_bidding(
@@ -7318,7 +7460,7 @@ class EuchreGame(tk.Tk):
         if profile_name == "Noob":
             self._show_noob_hint()
             return
-        if profile_name in {"The MC", "Card Counter"}:
+        if profile_name in {"The MC", "Card Counter", "Hoyle"}:
             self.get_hint()
             return
 

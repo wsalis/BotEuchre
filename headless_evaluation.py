@@ -334,6 +334,8 @@ def generate_deal():
 
 def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
+    if profile_name == "Hoyle":
+        return "Arbiter"
     if profile_name in {"Arbiter", "Ironclad", "Kyle", "Committee",
                         "Unanimous Council"}:
         return profile_name
@@ -375,6 +377,88 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
     elif round_num == 1 and seat == dealer_idx:
         call_margin -= 0.02
     return call_margin, loner_margin
+
+
+def _hoyle_hand_power(hand, trump_suit):
+    if not trump_suit:
+        return 0.0
+    score = 0.0
+    suit_counts = {s: 0 for s in SUITS_T}
+    for card in hand:
+        eff = trump_suit if (card.rank == 'J' and card.suit == SAME_COLOR_T[trump_suit]) else card.suit
+        suit_counts[eff] += 1
+        if card.rank == 'J' and card.suit == trump_suit:
+            score += 3.0
+        elif card.rank == 'J' and card.suit == SAME_COLOR_T[trump_suit]:
+            score += 2.5
+        elif eff == trump_suit and card.rank == 'A':
+            score += 2.0
+        elif eff == trump_suit:
+            score += 1.0
+        elif eff != trump_suit and card.rank == 'A':
+            score += 1.5
+        elif eff != trump_suit and card.rank == 'K':
+            score += 0.5
+    if suit_counts[trump_suit] > 0:
+        for suit in SUITS_T:
+            if suit != trump_suit and suit_counts[suit] == 0:
+                score += 1.0
+    return min(score, 10.0)
+
+
+def _hoyle_bid_action(hands, seat, up_card, dealer_idx, round_num, passed_seats):
+    is_stuck = (round_num == 2 and seat == dealer_idx and len(passed_seats) == 3)
+    candidate_suits = [up_card.suit] if round_num == 1 else [
+        suit for suit in SUITS_T if suit != up_card.suit]
+    best_suit = candidate_suits[0]
+    best_score = -999.0
+    for suit in candidate_suits:
+        score = _hoyle_hand_power(hands[seat], suit)
+        if round_num == 2 and suit == SAME_COLOR_T[up_card.suit]:
+            score += 0.35
+        if score > best_score:
+            best_score = score
+            best_suit = suit
+
+    off_aces = sum(
+        1 for c in hands[seat]
+        if (suit := (best_suit if c.rank == 'J' and c.suit == SAME_COLOR_T[best_suit] else c.suit)) != best_suit
+        and c.rank == 'A')
+
+    threshold = 6.2 - (0.2 if round_num == 2 else 0.0)
+    if is_stuck:
+        threshold = min(threshold, 5.7)
+    if best_score < threshold and not is_stuck:
+        return BID_PASS
+    if best_score >= 8.8 and off_aces >= 1:
+        return BID_ALONE_BASE + SUITS_T.index(best_suit)
+    return BID_CALL_BASE + SUITS_T.index(best_suit)
+
+
+def _hoyle_discard_index(hand_after_pickup, trump_suit):
+    rank_vals = {'9': 9, '10': 10, 'J': 11, 'Q': 12, 'K': 13, 'A': 14}
+
+    def eff(card):
+        if card.rank == 'J' and card.suit == SAME_COLOR_T[trump_suit]:
+            return trump_suit
+        return card.suit
+
+    best_idx = 0
+    best_score = -float('inf')
+    for idx, card in enumerate(hand_after_pickup):
+        card_eff = eff(card)
+        score = 0.0
+        if card_eff == trump_suit:
+            score -= 20
+        else:
+            score += 10
+        score += (14 - rank_vals[card.rank])
+        if card.rank == 'A':
+            score -= 6
+        if score > best_score:
+            best_score = score
+            best_idx = idx
+    return best_idx
 
 
 def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=None,
@@ -438,6 +522,11 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
     def decide_bid(seat, round_num, passed_seats, legal_actions):
         net_id = team1_net_id if seat in (0, 2) else team2_net_id
         profile = profile_for_seat(seat)
+        if profile == "Hoyle":
+            action = _hoyle_bid_action(hands, seat, up_card, dealer_idx, round_num, passed_seats)
+            if action not in legal_actions:
+                return legal_actions[0]
+            return action
         brain_id = brain_for_seat(seat)
         rollouts = budget_for_net(bid_rollouts, net_id)
         if profile == "Unanimous Council":
@@ -472,19 +561,22 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
     current_dealer_discard = None
     if called_round == 1:
         dealer_profile = profile_for_seat(dealer_idx)
-        dealer_brain = brain_for_seat(dealer_idx, caller_idx)
         dealer_hand = hands[dealer_idx]
         dealer_hand.append(up_card)
-        ranked_discards = choose_dealer_discard(
-            dealer_hand, trump_suit, caller_idx, is_loner,
-            up_card, dealer_idx, t1_score, t2_score, nn_eval_for(dealer_brain),
-            known_hands=None,
-            return_ranked=True)
-        discard_card = (ranked_discards[-1][0] if dealer_profile == "Saboteur"
-                        else ranked_discards[1][0]
-                        if dealer_profile == "Risk Manager" and len(ranked_discards) > 1
-                        and ranked_discards[0][1] - ranked_discards[1][1] <= 0.05
-                        else ranked_discards[0][0])
+        if dealer_profile == "Hoyle":
+            discard_card = dealer_hand[_hoyle_discard_index(dealer_hand, trump_suit)]
+        else:
+            dealer_brain = brain_for_seat(dealer_idx, caller_idx)
+            ranked_discards = choose_dealer_discard(
+                dealer_hand, trump_suit, caller_idx, is_loner,
+                up_card, dealer_idx, t1_score, t2_score, nn_eval_for(dealer_brain),
+                known_hands=None,
+                return_ranked=True)
+            discard_card = (ranked_discards[-1][0] if dealer_profile == "Saboteur"
+                            else ranked_discards[1][0]
+                            if dealer_profile == "Risk Manager" and len(ranked_discards) > 1
+                            and ranked_discards[0][1] - ranked_discards[1][1] <= 0.05
+                            else ranked_discards[0][0])
         dealer_hand.remove(discard_card)
         current_dealer_discard = discard_card
 
@@ -520,16 +612,19 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         active_cache = nn_cache_t1 if acting_team1 else nn_cache_t2
         active_iterations = budget_for_net(iterations, active_net_id)
         active_profile = profile_for_seat(sim.current_turn)
-        if active_profile == "Unanimous Council":
-            active_iterations *= 2
-        active_brain = brain_for_seat(sim.current_turn, caller_idx)
+        if active_profile == "Hoyle":
+            chosen_move = sim.get_heuristic_move()
+        else:
+            if active_profile == "Unanimous Council":
+                active_iterations *= 2
+            active_brain = brain_for_seat(sim.current_turn, caller_idx)
 
-        chosen_move = run_eval_mcts(
-            sim, gpu_pipe, active_brain, active_iterations, list(played_cards), up_card, dealer_idx,
-            t1_score, t2_score, nn_cache=active_cache,
-            dealer_discard=current_dealer_discard, profile_name=active_profile,
-            known_hands=None
-        )
+            chosen_move = run_eval_mcts(
+                sim, gpu_pipe, active_brain, active_iterations, list(played_cards), up_card, dealer_idx,
+                t1_score, t2_score, nn_cache=active_cache,
+                dealer_discard=current_dealer_discard, profile_name=active_profile,
+                known_hands=None
+            )
 
         if sim.trick:
             led_suit = sim.get_effective_suit(sim.trick[0][1])
