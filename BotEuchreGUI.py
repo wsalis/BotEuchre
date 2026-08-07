@@ -1320,9 +1320,13 @@ NEURAL_PROFILES = {
     "Counterpuncher", "Unanimous Council", "Risk Manager",
     "Scoreboard General", "Copycat", "Wildcard", "Saboteur",
 }
+HEADLESS_MCTS_PROFILES = {
+    "The MC", "Card Counter",
+}
 TOURNAMENT_PROFILES = tuple(label.split(" (")[0] for label in AI_PROFILE_CHOICES)
 HEADLESS_TOURNAMENT_PROFILES = tuple(
-    profile for profile in TOURNAMENT_PROFILES if profile in NEURAL_PROFILES)
+    profile for profile in TOURNAMENT_PROFILES
+    if profile in NEURAL_PROFILES or profile in HEADLESS_MCTS_PROFILES)
 
 def random_tournament_matchup(
         current=None, profiles=TOURNAMENT_PROFILES, chooser=random.choice):
@@ -1562,8 +1566,8 @@ HELP_TOPICS = [
     ("Headless Tournament Lab", (
         "The Headless Tournament Lab is a separate window for running many mirrored "
         "hands without drawing the table. Both competitor menus use the main game's "
-        "fair-play neural profile roster. Pure-MCTS novelty profiles are not offered because "
-        "they require a different benchmark engine.\n\n"
+        "fair-play neural profile roster plus supported MCTS profiles (The MC and "
+        "Card Counter).\n\n"
         "Total games is twice the number of paired deals. For each deal, the profiles "
         "play the same cards twice with team ownership swapped. This removes much of "
         "the luck of a favorable deal. Play iterations and bid rollouts control search "
@@ -2397,6 +2401,12 @@ class StatsTracker:
                     self.stats[key] = 0.0
         self.save()
 
+    def clear_stats(self):
+        self.stats = self._load_stats()
+        for k in self.stats:
+            self.stats[k] = 0.0 if k.startswith("active_") else 0
+        self.save()
+
 class SettingsStore:
     DEFAULTS = {
         "player_name": "You", "trainer_mode": False, "dark_mode": True,
@@ -2485,12 +2495,6 @@ class SessionJournal:
                     "metadata": metadata or {},
                 }
                 output_file.write(json.dumps(row, ensure_ascii=False) + "\n")
-
-    def clear_stats(self):
-        self.stats = self._load_stats()
-        for k in self.stats:
-            self.stats[k] = 0.0 if k.startswith("active_") else 0
-        self.save()
 
 class SoundFX:
     @staticmethod
@@ -3759,9 +3763,85 @@ class EuchreGame(tk.Tk):
             return self.team1_score, self.team2_score
         return self.team2_score, self.team1_score
 
+    def _build_live_play_snapshot(self, player_idx, known_hands=None):
+        sim_state = SimState(
+            self.trump_suit,
+            list(self.trick),
+            [list(h) for h in self.hands],
+            self.current_turn,
+            self.is_loner,
+            self.loner_partner_idx,
+            self.caller_idx,
+            self.voids,
+            self.team1_tricks,
+            self.team2_tricks,
+        )
+        active_cards = [c for h in sim_state.hands for c in h] + [c for _, c in sim_state.trick]
+        original_cards = active_cards + list(self.played_cards)
+        known = self._get_neural_known_hands(player_idx) if known_hands is None else known_hands
+        dealer_discard = getattr(self, 'dealer_discard', None)
+        return (
+            sim_state, original_cards, self.up_card, self.dealer_idx,
+            self.team1_score, self.team2_score, dealer_discard, known,
+        )
+
+    def _build_packed_play_snapshot(self, state_pack, player_idx, known_hands=None):
+        trick = [(p, Card(r, s)) for p, r, s in state_pack.get('trick', [])]
+        hands = [[Card(r, s) for r, s in hand] for hand in state_pack.get('hands', [[], [], [], []])]
+        voids_raw = state_pack.get('voids', {0: [], 1: [], 2: [], 3: []})
+        voids = {int(k): set(v) for k, v in voids_raw.items()}
+        for seat in range(4):
+            voids.setdefault(seat, set())
+
+        sim_state = SimState(
+            state_pack.get('trump_suit'),
+            trick,
+            hands,
+            int(state_pack.get('current_turn', player_idx)),
+            bool(state_pack.get('is_loner', False)),
+            int(state_pack.get('loner_partner_idx', -1)),
+            int(state_pack.get('caller_idx', -1)),
+            voids,
+            int(state_pack.get('team1_tricks', 0)),
+            int(state_pack.get('team2_tricks', 0)),
+        )
+
+        played_cards = [Card(r, s) for r, s in state_pack.get('played_cards', [])]
+        active_cards = [c for h in sim_state.hands for c in h] + [c for _, c in sim_state.trick]
+        original_cards = active_cards + played_cards
+
+        up_raw = state_pack.get('up_card')
+        up_card = Card(up_raw[0], up_raw[1]) if up_raw else None
+        discard_raw = state_pack.get('dealer_discard')
+        dealer_discard = Card(discard_raw[0], discard_raw[1]) if discard_raw else None
+        known = self._get_neural_known_hands(player_idx) if known_hands is None else known_hands
+        return (
+            sim_state, original_cards, up_card,
+            int(state_pack.get('dealer_idx', self.dealer_idx)),
+            int(state_pack.get('team1_score', self.team1_score)),
+            int(state_pack.get('team2_score', self.team2_score)),
+            dealer_discard, known,
+        )
+
     def get_cheems_ranked_moves(self, player_idx=0, known_hands=None, neural_brain=None,
-                                iterations=None):
-        legal_indices = self.get_legal_moves(self.hands[player_idx])
+                                iterations=None, state_pack=None):
+        if state_pack is None:
+            (sim_state, original_cards, up_card, dealer_idx,
+             t1_score, t2_score, dealer_discard, known_hands_eval) = self._build_live_play_snapshot(
+                player_idx, known_hands=known_hands)
+        else:
+            (sim_state, original_cards, up_card, dealer_idx,
+             t1_score, t2_score, dealer_discard, known_hands_eval) = self._build_packed_play_snapshot(
+                state_pack, player_idx, known_hands=known_hands)
+
+        if player_idx < 0 or player_idx >= len(sim_state.hands):
+            return []
+        search_hand = sim_state.hands[player_idx]
+        if sim_state.current_turn == player_idx:
+            legal_cards = sim_state.get_legal_moves()
+            legal_indices = [i for i, card in enumerate(search_hand) if card in legal_cards]
+        else:
+            legal_indices = list(range(len(search_hand)))
         if not legal_indices: return []
         if len(legal_indices) == 1: return [(legal_indices[0], 100.0)]
 
@@ -3776,31 +3856,27 @@ class EuchreGame(tk.Tk):
             iterations *= 2
 
         try:
-            # Reconstruct original cards matrix
-            active_cards = [c for h in self.hands for c in h] + [c for _, c in self.trick]
-            original_cards = active_cards + self.played_cards
-
             # Run AlphaZero tree search at the configured UI depth.
             policy_dict = run_alphazero_mcts(
-                sim_state=self,
+                sim_state=sim_state,
                 neural_net=neural_brain,
                 iterations=iterations,
                 original_cards=original_cards,
-                up_card=self.up_card,
-                dealer_idx=self.dealer_idx,
-                t1_score=self.team1_score,
-                t2_score=self.team2_score,
+                up_card=up_card,
+                dealer_idx=dealer_idx,
+                t1_score=t1_score,
+                t2_score=t2_score,
                 device=self.cheems_device,
-                dealer_discard=getattr(self, 'dealer_discard', None),
-                known_hands=(self._get_neural_known_hands(player_idx)
-                             if known_hands is None else known_hands)
+                dealer_discard=dealer_discard,
+                known_hands=known_hands_eval,
             )
 
             ranked_moves = []
             for card, visits_ratio in policy_dict.items():
                 for idx in legal_indices:
                     # Match by rank and suit instead of object reference
-                    if self.hands[player_idx][idx].rank == card.rank and self.hands[player_idx][idx].suit == card.suit:
+                    if (search_hand[idx].rank == card.rank
+                            and search_hand[idx].suit == card.suit):
                         weight = visits_ratio * 100.0
                         ranked_moves.append((idx, weight))
                         break
@@ -3808,7 +3884,7 @@ class EuchreGame(tk.Tk):
             ranked_moves.sort(key=lambda x: x[1], reverse=True)
             return ranked_moves
         except Exception as e:
-            print(f"Arbiter MCTS Error: {e}")
+            print(f"Arbiter MCTS Error (seat {player_idx}, turn {sim_state.current_turn}): {e}")
             return [(idx, 100.0 / len(legal_indices)) for idx in legal_indices]
 
     def _get_neural_known_hands(self, player_idx):
@@ -3817,13 +3893,36 @@ class EuchreGame(tk.Tk):
     def _get_autoplay_known_hands(self, player_idx):
         return None
 
-    def get_cheems_best_move(self, player_idx, known_hands=None, iterations=None):
-        legal_indices = self.get_legal_moves(self.hands[player_idx])
+    def get_cheems_best_move(self, player_idx, known_hands=None, iterations=None,
+                             state_pack=None):
+        if state_pack is None:
+            legal_indices = self.get_legal_moves(self.hands[player_idx])
+        else:
+            packed_hands = state_pack.get('hands', [[], [], [], []])
+            if player_idx < 0 or player_idx >= len(packed_hands):
+                return 0, 0.0
+            packed_hand = [Card(r, s) for r, s in packed_hands[player_idx]]
+            trick = [(p, Card(r, s)) for p, r, s in state_pack.get('trick', [])]
+            sim_view = SimState(
+                state_pack.get('trump_suit'),
+                trick,
+                [packed_hand if i == player_idx else [] for i in range(4)],
+                player_idx,
+                bool(state_pack.get('is_loner', False)),
+                int(state_pack.get('loner_partner_idx', -1)),
+                int(state_pack.get('caller_idx', -1)),
+                {0: set(), 1: set(), 2: set(), 3: set()},
+                int(state_pack.get('team1_tricks', 0)),
+                int(state_pack.get('team2_tricks', 0)),
+            )
+            legal_cards = sim_view.get_legal_moves()
+            legal_indices = [i for i, card in enumerate(packed_hand) if card in legal_cards]
         if not legal_indices: return 0, 0.0
         if len(legal_indices) == 1: return legal_indices[0], 100.0
             
         ranked_moves = self.get_cheems_ranked_moves(
-            player_idx, known_hands=known_hands, iterations=iterations)
+            player_idx, known_hands=known_hands, iterations=iterations,
+            state_pack=state_pack)
         if ranked_moves:
             profile = self.ai_profiles.get(str(player_idx))
             if profile == "Saboteur":
@@ -8818,10 +8917,12 @@ class EuchreGame(tk.Tk):
         prof = self.ai_profiles.get(str(player_idx), "Human")
         if prof in NEURAL_PROFILES:
             known_hands = self._get_autoplay_known_hands(player_idx)
+            state_pack = self.ai_model.pack_ui_state(self)
             self._launch_search(
                 f"{prof} table play",
                 lambda: self.get_cheems_best_move(
-                    player_idx, known_hands=known_hands),
+                    player_idx, known_hands=known_hands,
+                    state_pack=state_pack),
                 lambda action_idx, confidence: self._apply_ai_move(
                     player_idx, action_idx, confidence))
             return

@@ -108,6 +108,10 @@ class AlphaNode:
         self.player_idx = player_idx
 
 
+class GpuPipeClosedError(Exception):
+    """Raised when the GPU server pipe is no longer available."""
+
+
 # ==========================================
 # 2. MICRO-BATCHED MCTS (sends leaf evaluations through a pipe to the central GPU
 #    server instead of calling a local net directly, mirroring the Desktop self-play
@@ -244,8 +248,11 @@ def run_eval_mcts(sim_state, gpu_pipe, net_id, iterations, current_played_cards,
                 # Send (net_id, tensor) down the pipe and block until the GPU server answers.
                 # net_id tells the server which of the two loaded models (current/baseline)
                 # to batch this request against.
-                gpu_pipe.send((net_id, ts))
-                gpu_result = gpu_pipe.recv()
+                try:
+                    gpu_pipe.send((net_id, ts))
+                    gpu_result = gpu_pipe.recv()
+                except (EOFError, BrokenPipeError, OSError, RuntimeError) as exc:
+                    raise GpuPipeClosedError("GPU pipe closed during play MCTS") from exc
                 probs, v = gpu_result['policy'], gpu_result['value']
                 nn_cache[state_key] = (probs, v)
 
@@ -413,8 +420,11 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
 
     def nn_eval_for(net_id):
         def nn_eval(tensor):
-            gpu_pipe.send((net_id, tensor))
-            resp = gpu_pipe.recv()
+            try:
+                gpu_pipe.send((net_id, tensor))
+                resp = gpu_pipe.recv()
+            except (EOFError, BrokenPipeError, OSError, RuntimeError) as exc:
+                raise GpuPipeClosedError("GPU pipe closed during bid/discard eval") from exc
             return resp['policy'], float(resp['value'])
         return nn_eval
 
@@ -618,40 +628,44 @@ def worker_process_loop(worker_id, gpu_pipe, num_deals_assigned, iterations, res
     random.seed(worker_seed)
 
     for deal_index in range(num_deals_assigned):
-        deal_seed = worker_seed * 1000000 + deal_index
-        random.seed(deal_seed)
-        np.random.seed(deal_seed % (2 ** 32 - 1))
-        deal = generate_deal()
+        try:
+            deal_seed = worker_seed * 1000000 + deal_index
+            random.seed(deal_seed)
+            np.random.seed(deal_seed % (2 ** 32 - 1))
+            deal = generate_deal()
 
-        # Orientation A: current brain controls Team 1. Orientation B: teams swapped.
-        # Same exact cards both times - this cancels deal-luck almost entirely, leaving
-        # mostly the skill difference (plus residual MCTS search-noise) between the pair.
-        # Since the brains now BID for themselves, caller/loner can differ between the
-        # two orientations - report them per-orientation.
-        result_a = play_dealt_hand(
-            deal, gpu_pipe, iterations, current_is_team1=True,
-            bid_rollouts=bid_rollouts, return_details=include_details,
-            profiles=profiles)
-        result_b = play_dealt_hand(
-            deal, gpu_pipe, iterations, current_is_team1=False,
-            bid_rollouts=bid_rollouts, return_details=include_details,
-            profiles=profiles)
-        combined = result_a[:5] + result_b[:5]
-        if include_details:
-            ledger = {
-                "format": "bot-euchre-deal-ledger-v1",
-                "deal_seed": deal_seed,
-                "worker_id": worker_id,
-                "worker_deal_index": deal_index,
-                "dealer_idx": deal["dealer_idx"],
-                "starting_score": [deal["t1_score"], deal["t2_score"]],
-                "hands": [[str(card) for card in hand] for hand in deal["hands"]],
-                "up_card": str(deal["up_card"]),
-                "orientation_a": result_a[5],
-                "orientation_b": result_b[5],
-            }
-            combined += (ledger,)
-        results_queue.put(combined)
+            # Orientation A: current brain controls Team 1. Orientation B: teams swapped.
+            # Same exact cards both times - this cancels deal-luck almost entirely, leaving
+            # mostly the skill difference (plus residual MCTS search-noise) between the pair.
+            # Since the brains now BID for themselves, caller/loner can differ between the
+            # two orientations - report them per-orientation.
+            result_a = play_dealt_hand(
+                deal, gpu_pipe, iterations, current_is_team1=True,
+                bid_rollouts=bid_rollouts, return_details=include_details,
+                profiles=profiles)
+            result_b = play_dealt_hand(
+                deal, gpu_pipe, iterations, current_is_team1=False,
+                bid_rollouts=bid_rollouts, return_details=include_details,
+                profiles=profiles)
+            combined = result_a[:5] + result_b[:5]
+            if include_details:
+                ledger = {
+                    "format": "bot-euchre-deal-ledger-v1",
+                    "deal_seed": deal_seed,
+                    "worker_id": worker_id,
+                    "worker_deal_index": deal_index,
+                    "dealer_idx": deal["dealer_idx"],
+                    "starting_score": [deal["t1_score"], deal["t2_score"]],
+                    "hands": [[str(card) for card in hand] for hand in deal["hands"]],
+                    "up_card": str(deal["up_card"]),
+                    "orientation_a": result_a[5],
+                    "orientation_b": result_b[5],
+                }
+                combined += (ledger,)
+            results_queue.put(combined)
+        except GpuPipeClosedError:
+            # Parent process requested shutdown or GPU server is gone.
+            break
 
 
 
