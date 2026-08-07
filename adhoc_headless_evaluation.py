@@ -169,9 +169,11 @@ def run_match(model_a, model_b, args):
         migrate_jsonl_schema(args.ledger, "bot-euchre-deal-ledger")
     ledger_handle = open(args.ledger, "a", encoding="utf-8") if args.ledger else None
     stopped_early = False
+    last_progress_log_at = start
+    progress_every_deals = max(1, min(100, num_deals // 20 or 1))
 
     try:
-        for _ in range(num_deals):
+        for deal_idx in range(num_deals):
             result = data_queue.get()
             (v1a, v2a, team1_tricks_a, caller_team_a, is_loner_a,
              v1b, v2b, team1_tricks_b, caller_team_b, is_loner_b) = result[:10]
@@ -234,6 +236,22 @@ def run_match(model_a, model_b, args):
                             a_loner_defense_stops += 1
 
             paired_diffs.append(((v1a - v2a) + (v2b - v1b)) / 2.0)
+
+            deals_done = deal_idx + 1
+            now = time.time()
+            if (deals_done % progress_every_deals == 0
+                    or now - last_progress_log_at >= 60
+                    or deals_done == num_deals):
+                elapsed_live = max(1e-9, now - start)
+                deals_per_sec = deals_done / elapsed_live
+                eta_sec = (num_deals - deals_done) / deals_per_sec if deals_per_sec > 0 else 0.0
+                print(
+                    f"[AdHoc Eval] Progress: {deals_done}/{num_deals} deals "
+                    f"({(100.0 * deals_done / num_deals):.1f}%) | "
+                    f"elapsed {elapsed_live/60:.1f}m | ETA {eta_sec/60:.1f}m",
+                    flush=True)
+                last_progress_log_at = now
+
             if (args.early_stop_min_deals
                     and len(paired_diffs) >= args.early_stop_min_deals):
                 _, _, live_low, live_high = paired_summary(paired_diffs)
