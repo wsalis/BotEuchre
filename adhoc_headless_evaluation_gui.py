@@ -78,7 +78,13 @@ def _run_with_sqlite_retry(operation, retries=5, delay_seconds=0.2):
 
 
 def _shared_queue_init(path):
-    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    directory = os.path.dirname(path) or "."
+    try:
+        os.makedirs(directory, exist_ok=True)
+    except OSError as error:
+        raise RuntimeError(
+            f"Shared queue path is unavailable: {path}\n"
+            "Verify the network/share is mounted on this machine.") from error
     with _sqlite_connect(path) as conn:
         conn.execute(
             """
@@ -420,11 +426,24 @@ class EvalGui(tk.Tk):
         self.process_started_at = None
         self.last_output_at = None
         self.watchdog_reason = None
+        self.startup_warning = None
 
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
-        self._load_jobs_from_backend()
+        try:
+            self._load_jobs_from_backend()
+        except Exception as error:
+            self.shared_queue_enabled_var.set(False)
+            self.startup_warning = (
+                "Shared queue was disabled at startup because the configured "
+                "path is unavailable on this machine.\n\n"
+                f"Reason: {error}")
+            self._load_jobs_from_backend()
+            self.save_runtime_preferences()
         self.refresh_job_queue()
+        if self.startup_warning:
+            self.after(100, lambda: messagebox.showwarning(
+                "Shared Queue Unavailable", self.startup_warning))
         self.after(100, self.drain_output_queue)
         self.after(1000, self.watchdog_tick)
 
