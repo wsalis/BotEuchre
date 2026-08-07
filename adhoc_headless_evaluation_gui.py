@@ -12,6 +12,8 @@ import queue
 import random
 import re
 import signal
+import sqlite3
+import socket
 import subprocess
 import sys
 import threading
@@ -44,7 +46,186 @@ LAB_SETTINGS_DEFAULTS = {
     "randomize_teams": False,
     "round_robin_hands": "200",
     "round_robin_label_prefix": "round_robin",
+    "shared_queue_enabled": False,
+    "shared_queue_path": os.path.join(
+        NODE_STATE_DIR, "bot_euchre_headless_jobs.sqlite3"),
+    "shared_queue_lease_minutes": "30",
 }
+
+
+def _sqlite_connect(path):
+    conn = sqlite3.connect(path, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA synchronous=NORMAL")
+    return conn
+
+
+def _shared_queue_init(path):
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    with _sqlite_connect(path) as conn:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS queue_jobs (
+                id TEXT PRIMARY KEY,
+                status TEXT NOT NULL,
+                label TEXT,
+                match TEXT,
+                created_at REAL,
+                started_at REAL,
+                finished_at REAL,
+                return_code INTEGER,
+                failure_reason TEXT,
+                lease_owner TEXT,
+                lease_expires_at REAL,
+                attempts INTEGER NOT NULL DEFAULT 0,
+                command_json TEXT NOT NULL
+            )
+            """)
+        conn.execute(
+            """
+            CREATE INDEX IF NOT EXISTS idx_queue_jobs_status_lease
+            ON queue_jobs(status, lease_expires_at, created_at)
+            """)
+
+
+def _shared_queue_list(path):
+    _shared_queue_init(path)
+    with _sqlite_connect(path) as conn:
+        rows = conn.execute(
+            """
+            SELECT id, status, label, match, created_at, started_at, finished_at,
+                   return_code, failure_reason, lease_owner, lease_expires_at,
+                   attempts, command_json
+            FROM queue_jobs
+            ORDER BY created_at ASC
+            """).fetchall()
+    jobs = []
+    for row in rows:
+        job = dict(row)
+        try:
+            job["command"] = json.loads(job.pop("command_json"))
+        except json.JSONDecodeError:
+            job["command"] = []
+        jobs.append(job)
+    return jobs
+
+
+def _shared_queue_enqueue(path, job):
+    _shared_queue_init(path)
+    with _sqlite_connect(path) as conn:
+        conn.execute(
+            """
+            INSERT INTO queue_jobs(
+                id, status, label, match, created_at, command_json
+            ) VALUES(?, ?, ?, ?, ?, ?)
+            """,
+            (
+                job["id"],
+                job.get("status", "queued"),
+                job.get("label", ""),
+                job.get("match", ""),
+                float(job.get("created_at", time.time())),
+                json.dumps(job.get("command", []), ensure_ascii=False),
+            ),
+        )
+
+
+def _shared_queue_remove(path, job_ids):
+    if not job_ids:
+        return
+    _shared_queue_init(path)
+    placeholders = ",".join("?" for _ in job_ids)
+    with _sqlite_connect(path) as conn:
+        conn.execute(
+            f"""
+            DELETE FROM queue_jobs
+            WHERE id IN ({placeholders})
+              AND status != 'running'
+            """,
+            tuple(job_ids),
+        )
+
+
+def _shared_queue_claim_next(path, owner_id, lease_seconds):
+    _shared_queue_init(path)
+    now = time.time()
+    with _sqlite_connect(path) as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        row = conn.execute(
+            """
+            SELECT id, command_json
+            FROM queue_jobs
+            WHERE status IN ('queued', 'interrupted')
+               OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+            ORDER BY created_at ASC
+            LIMIT 1
+            """,
+            (now,),
+        ).fetchone()
+        if row is None:
+            conn.commit()
+            return None
+        conn.execute(
+            """
+            UPDATE queue_jobs
+            SET status='running',
+                started_at=?,
+                lease_owner=?,
+                lease_expires_at=?,
+                attempts=attempts+1,
+                finished_at=NULL,
+                return_code=NULL,
+                failure_reason=NULL
+            WHERE id=?
+            """,
+            (now, owner_id, now + lease_seconds, row["id"]),
+        )
+        claimed = conn.execute(
+            "SELECT * FROM queue_jobs WHERE id=?",
+            (row["id"],),
+        ).fetchone()
+        conn.commit()
+    job = dict(claimed)
+    try:
+        job["command"] = json.loads(job.pop("command_json"))
+    except json.JSONDecodeError:
+        job["command"] = []
+    return job
+
+
+def _shared_queue_heartbeat(path, job_id, owner_id, lease_seconds):
+    _shared_queue_init(path)
+    now = time.time()
+    with _sqlite_connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE queue_jobs
+            SET lease_expires_at=?
+            WHERE id=? AND status='running' AND lease_owner=?
+            """,
+            (now + lease_seconds, job_id, owner_id),
+        )
+
+
+def _shared_queue_finish(path, job_id, owner_id, return_code, failure_reason=None):
+    _shared_queue_init(path)
+    now = time.time()
+    status = "completed" if return_code == 0 else "failed"
+    with _sqlite_connect(path) as conn:
+        conn.execute(
+            """
+            UPDATE queue_jobs
+            SET status=?,
+                finished_at=?,
+                return_code=?,
+                failure_reason=?,
+                lease_owner=NULL,
+                lease_expires_at=NULL
+            WHERE id=? AND lease_owner=?
+            """,
+            (status, now, int(return_code), failure_reason, job_id, owner_id),
+        )
 
 def prepare_lab_state():
     prepare_node_state()
@@ -123,9 +304,11 @@ class EvalGui(tk.Tk):
         self.process = None
         self.worker_thread = None
         self.current_job_id = None
-        self.jobs = load_job_queue()
-        save_job_queue(self.jobs)
         self.lab_settings = load_lab_settings()
+        self.jobs = []
+        self.queue_owner_id = (
+            f"{NODE_ID}@{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}")
+        self.last_lease_heartbeat_at = 0.0
 
         self.competitor_options = list(HEADLESS_TOURNAMENT_PROFILES)
         self.model_a_var = tk.StringVar(value=self.default_model_a())
@@ -147,6 +330,14 @@ class EvalGui(tk.Tk):
             value=self.lab_settings.get("round_robin_hands", "200"))
         self.round_robin_label_prefix_var = tk.StringVar(
             value=self.lab_settings.get("round_robin_label_prefix", "round_robin"))
+        self.shared_queue_enabled_var = tk.BooleanVar(
+            value=bool(self.lab_settings.get("shared_queue_enabled", False)))
+        self.shared_queue_path_var = tk.StringVar(
+            value=self.lab_settings.get(
+                "shared_queue_path",
+                LAB_SETTINGS_DEFAULTS["shared_queue_path"]))
+        self.shared_queue_lease_minutes_var = tk.StringVar(
+            value=self.lab_settings.get("shared_queue_lease_minutes", "30"))
         self.early_stop_var = tk.StringVar(
             value=self.lab_settings.get("early_stop_min_deals", "0"))
         self.max_runtime_var = tk.StringVar(
@@ -159,6 +350,7 @@ class EvalGui(tk.Tk):
 
         self.create_widgets()
         self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self._load_jobs_from_backend()
         self.refresh_job_queue()
         self.after(100, self.drain_output_queue)
         self.after(1000, self.watchdog_tick)
@@ -245,6 +437,20 @@ class EvalGui(tk.Tk):
         ttk.Label(watchdog, text=" / ").pack(side=tk.LEFT)
         ttk.Entry(watchdog, textvariable=self.stall_minutes_var, width=8).pack(side=tk.LEFT)
 
+        ttk.Checkbutton(
+            runtime, text="Use shared SQLite queue (cluster mode)",
+            variable=self.shared_queue_enabled_var,
+            command=self._on_shared_queue_toggle).grid(
+                row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        ttk.Label(runtime, text="Shared queue DB / lease minutes").grid(
+            row=7, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(runtime, textvariable=self.shared_queue_path_var).grid(
+            row=7, column=1, columnspan=2, sticky="ew", pady=4)
+        ttk.Button(runtime, text="Browse", command=self.browse_shared_queue).grid(
+            row=7, column=3, sticky="w", pady=4)
+        ttk.Entry(runtime, textvariable=self.shared_queue_lease_minutes_var, width=8).grid(
+            row=7, column=4, sticky="w", padx=(8, 0), pady=4)
+
         actions = ttk.Frame(outer)
         actions.pack(fill=tk.X, pady=(12, 8))
         self.start_button = ttk.Button(actions, text="Start Evaluation", command=self.start_evaluation)
@@ -303,6 +509,58 @@ class EvalGui(tk.Tk):
         if path:
             self.log_var.set(os.path.relpath(path, BASE_DIR))
 
+    def browse_shared_queue(self):
+        path = filedialog.asksaveasfilename(
+            title="Select shared queue DB",
+            defaultextension=".sqlite3",
+            filetypes=[("SQLite DB", "*.sqlite3"), ("All files", "*.*")],
+        )
+        if path:
+            self.shared_queue_path_var.set(path)
+
+    def _shared_queue_enabled(self):
+        return bool(self.shared_queue_enabled_var.get())
+
+    def _shared_queue_path(self):
+        return self.shared_queue_path_var.get().strip()
+
+    def _shared_queue_lease_seconds(self):
+        minutes = self.read_positive_int(
+            self.shared_queue_lease_minutes_var.get(),
+            "Shared queue lease minutes")
+        return int(minutes * 60)
+
+    def _load_jobs_from_backend(self):
+        if self._shared_queue_enabled():
+            path = self._shared_queue_path()
+            _shared_queue_init(path)
+            self.jobs = _shared_queue_list(path)
+            return
+        self.jobs = load_job_queue()
+        save_job_queue(self.jobs)
+
+    def _enqueue_job(self, job):
+        if self._shared_queue_enabled():
+            _shared_queue_enqueue(self._shared_queue_path(), job)
+            return
+        self.jobs.append(job)
+        save_job_queue(self.jobs)
+
+    def _on_shared_queue_toggle(self):
+        if self.process is not None:
+            messagebox.showwarning(
+                "Queue Backend",
+                "Stop the current run before switching queue backend.")
+            self.shared_queue_enabled_var.set(not self.shared_queue_enabled_var.get())
+            return
+        try:
+            self._load_jobs_from_backend()
+            self.refresh_job_queue()
+            self.save_runtime_preferences()
+        except Exception as error:
+            messagebox.showerror("Queue Backend", str(error))
+            self.shared_queue_enabled_var.set(not self.shared_queue_enabled_var.get())
+
     def show_sample_planner(self):
         dialog = tk.Toplevel(self)
         dialog.title("Paired Benchmark Sample Planner")
@@ -354,6 +612,9 @@ class EvalGui(tk.Tk):
             "randomize_teams": self.randomize_teams_var.get(),
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
+            "shared_queue_enabled": self.shared_queue_enabled_var.get(),
+            "shared_queue_path": self.shared_queue_path_var.get().strip(),
+            "shared_queue_lease_minutes": self.shared_queue_lease_minutes_var.get().strip(),
         })
 
     def _slug(self, text):
@@ -436,11 +697,16 @@ class EvalGui(tk.Tk):
         except ValueError as error:
             messagebox.showerror("Invalid Job", str(error))
             return
-        self.jobs.append({
+        job = {
             "id": uuid.uuid4().hex, "status": "queued", "label": label,
-            "match": match, "created_at": time.time(), "command": command})
+            "match": match, "created_at": time.time(), "command": command}
         self.save_runtime_preferences()
-        save_job_queue(self.jobs)
+        if self._shared_queue_enabled():
+            _shared_queue_enqueue(self._shared_queue_path(), job)
+            self._load_jobs_from_backend()
+        else:
+            self.jobs.append(job)
+            save_job_queue(self.jobs)
         self.refresh_job_queue()
 
     def queue_full_round_robin(self):
@@ -473,6 +739,7 @@ class EvalGui(tk.Tk):
         log_path = self.log_var.get().strip()
         ledger_path = self.ledger_var.get().strip()
         created = 0
+        new_jobs = []
 
         for pair_index, (model_a, model_b) in enumerate(
                 itertools.combinations(profiles, 2), start=1):
@@ -483,7 +750,7 @@ class EvalGui(tk.Tk):
                 model_a, model_b, hands, mcts_a, mcts_b,
                 bid_a, bid_b, worker_multiplier, pair_label, log_path,
                 pair_seed, ledger_path, early_stop)
-            self.jobs.append({
+            new_jobs.append({
                 "id": uuid.uuid4().hex,
                 "status": "queued",
                 "label": pair_label,
@@ -494,7 +761,14 @@ class EvalGui(tk.Tk):
             created += 1
 
         self.save_runtime_preferences()
-        save_job_queue(self.jobs)
+        if self._shared_queue_enabled():
+            path = self._shared_queue_path()
+            for job in new_jobs:
+                _shared_queue_enqueue(path, job)
+            self.jobs = _shared_queue_list(path)
+        else:
+            self.jobs.extend(new_jobs)
+            save_job_queue(self.jobs)
         self.refresh_job_queue()
         total_games = created * hands
         self.append_output(
@@ -508,27 +782,45 @@ class EvalGui(tk.Tk):
     def refresh_job_queue(self):
         if not hasattr(self, "job_tree"):
             return
+        if self._shared_queue_enabled():
+            self.jobs = _shared_queue_list(self._shared_queue_path())
         self.job_tree.delete(*self.job_tree.get_children())
         for job in self.jobs:
             created = time.strftime(
                 "%Y-%m-%d %H:%M", time.localtime(job.get("created_at", 0)))
+            status = job.get("status", "queued")
+            if status == "running" and job.get("lease_owner"):
+                status = f"running ({job.get('lease_owner')})"
             self.job_tree.insert("", tk.END, iid=job["id"], values=(
-                job.get("status", "queued"), job.get("label", ""),
+                status, job.get("label", ""),
                 job.get("match", ""), created))
 
     def run_next_job(self):
         if self.process is not None:
             return
-        job = next((
-            item for item in self.jobs
-            if item.get("status") in {"queued", "interrupted"}), None)
+        if self._shared_queue_enabled():
+            try:
+                job = _shared_queue_claim_next(
+                    self._shared_queue_path(),
+                    self.queue_owner_id,
+                    self._shared_queue_lease_seconds(),
+                )
+            except Exception as error:
+                messagebox.showerror("Shared Queue", str(error))
+                return
+        else:
+            job = next((
+                item for item in self.jobs
+                if item.get("status") in {"queued", "interrupted"}), None)
         if job is None:
             messagebox.showinfo("Job Queue", "No queued or interrupted jobs remain.")
             return
-        job["status"] = "running"
-        job["started_at"] = time.time()
+        if not self._shared_queue_enabled():
+            job["status"] = "running"
+            job["started_at"] = time.time()
         self.current_job_id = job["id"]
-        save_job_queue(self.jobs)
+        if not self._shared_queue_enabled():
+            save_job_queue(self.jobs)
         self.refresh_job_queue()
         self.append_output(
             f"\n[QUEUE] Starting {job['label']}: {job['match']}\n")
@@ -542,8 +834,12 @@ class EvalGui(tk.Tk):
         if self.current_job_id in selected_ids:
             messagebox.showwarning("Job Queue", "Stop the running job before removing it.")
             return
-        self.jobs = [job for job in self.jobs if job["id"] not in selected_ids]
-        save_job_queue(self.jobs)
+        if self._shared_queue_enabled():
+            _shared_queue_remove(self._shared_queue_path(), list(selected_ids))
+            self.jobs = _shared_queue_list(self._shared_queue_path())
+        else:
+            self.jobs = [job for job in self.jobs if job["id"] not in selected_ids]
+            save_job_queue(self.jobs)
         self.refresh_job_queue()
 
     def launch_command(self, command):
@@ -637,16 +933,26 @@ class EvalGui(tk.Tk):
                 self.set_running(False)
             elif isinstance(item, tuple) and item[0] == "finished":
                 was_queued = self.current_job_id is not None
-                for job in self.jobs:
-                    if job["id"] == self.current_job_id:
-                        job["status"] = "completed" if item[1] == 0 else "failed"
-                        job["finished_at"] = time.time()
-                        job["return_code"] = item[1]
-                        if self.watchdog_reason:
-                            job["failure_reason"] = self.watchdog_reason
-                        break
+                if self._shared_queue_enabled() and self.current_job_id is not None:
+                    _shared_queue_finish(
+                        self._shared_queue_path(),
+                        self.current_job_id,
+                        self.queue_owner_id,
+                        item[1],
+                        self.watchdog_reason,
+                    )
+                else:
+                    for job in self.jobs:
+                        if job["id"] == self.current_job_id:
+                            job["status"] = "completed" if item[1] == 0 else "failed"
+                            job["finished_at"] = time.time()
+                            job["return_code"] = item[1]
+                            if self.watchdog_reason:
+                                job["failure_reason"] = self.watchdog_reason
+                            break
                 self.current_job_id = None
-                save_job_queue(self.jobs)
+                if not self._shared_queue_enabled():
+                    save_job_queue(self.jobs)
                 self.refresh_job_queue()
                 if was_queued:
                     self.after(200, self.run_next_job)
@@ -662,6 +968,16 @@ class EvalGui(tk.Tk):
                 stall_limit = float(self.stall_minutes_var.get()) * 60
             except ValueError:
                 runtime_limit = stall_limit = 0
+            if (self._shared_queue_enabled() and self.current_job_id
+                    and now - self.last_lease_heartbeat_at >= 10):
+                try:
+                    _shared_queue_heartbeat(
+                        self._shared_queue_path(), self.current_job_id,
+                        self.queue_owner_id, self._shared_queue_lease_seconds())
+                    self.last_lease_heartbeat_at = now
+                except Exception as error:
+                    self.append_output(
+                        f"\n[WATCHDOG] Shared queue heartbeat error: {error}\n")
             reason = None
             if runtime_limit and self.process_started_at and now - self.process_started_at > runtime_limit:
                 reason = "maximum runtime exceeded"
