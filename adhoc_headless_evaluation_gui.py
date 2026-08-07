@@ -7,6 +7,7 @@ Run with:
 
 import os
 import json
+import itertools
 import queue
 import random
 import re
@@ -41,6 +42,8 @@ LAB_SETTINGS_DEFAULTS = {
     "max_runtime_minutes": "360",
     "stall_minutes": "30",
     "randomize_teams": False,
+    "round_robin_hands": "200",
+    "round_robin_label_prefix": "round_robin",
 }
 
 def prepare_lab_state():
@@ -140,6 +143,10 @@ class EvalGui(tk.Tk):
         self.log_var = tk.StringVar(value=NODE_ADHOC_HISTORY_PATH)
         self.ledger_var = tk.StringVar(
             value=self.lab_settings.get("ledger_path", NODE_DEAL_LEDGER_PATH))
+        self.round_robin_hands_var = tk.StringVar(
+            value=self.lab_settings.get("round_robin_hands", "200"))
+        self.round_robin_label_prefix_var = tk.StringVar(
+            value=self.lab_settings.get("round_robin_label_prefix", "round_robin"))
         self.early_stop_var = tk.StringVar(
             value=self.lab_settings.get("early_stop_min_deals", "0"))
         self.max_runtime_var = tk.StringVar(
@@ -206,8 +213,13 @@ class EvalGui(tk.Tk):
         ttk.Label(runtime, text="Run label").grid(row=0, column=2, sticky="w", padx=(24, 8), pady=4)
         ttk.Entry(runtime, textvariable=self.label_var).grid(row=0, column=3, sticky="ew", pady=4)
 
-        ttk.Label(runtime, text="Worker multiplier").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(runtime, textvariable=self.worker_multiplier_var, width=12).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(runtime, text="Round robin games / matchup").grid(row=1, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(runtime, textvariable=self.round_robin_hands_var, width=12).grid(row=1, column=1, sticky="w", pady=4)
+        ttk.Label(runtime, text="Round robin label prefix").grid(row=1, column=2, sticky="w", padx=(24, 8), pady=4)
+        ttk.Entry(runtime, textvariable=self.round_robin_label_prefix_var).grid(row=1, column=3, sticky="ew", pady=4)
+
+        ttk.Label(runtime, text="Worker multiplier").grid(row=2, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Entry(runtime, textvariable=self.worker_multiplier_var, width=12).grid(row=2, column=1, sticky="w", pady=4)
         ttk.Label(runtime, text="JSONL log").grid(row=2, column=2, sticky="w", padx=(24, 8), pady=4)
         ttk.Entry(runtime, textvariable=self.log_var).grid(row=2, column=3, sticky="ew", pady=4)
         ttk.Button(runtime, text="Browse", command=self.browse_log).grid(row=2, column=4, padx=(8, 0), pady=4)
@@ -241,6 +253,9 @@ class EvalGui(tk.Tk):
         self.stop_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Clear Output", command=self.clear_output).pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(actions, text="Queue Current", command=self.queue_current).pack(side=tk.LEFT, padx=(8, 0))
+        ttk.Button(
+            actions, text="Queue Full Round Robin",
+            command=self.queue_full_round_robin).pack(side=tk.LEFT, padx=(8, 0))
         self.run_queue_button = ttk.Button(actions, text="Run Queue", command=self.run_next_job)
         self.run_queue_button.pack(side=tk.LEFT, padx=(8, 0))
         ttk.Button(
@@ -337,7 +352,12 @@ class EvalGui(tk.Tk):
             "max_runtime_minutes": self.max_runtime_var.get().strip(),
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
+            "round_robin_hands": self.round_robin_hands_var.get().strip(),
+            "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
         })
+
+    def _slug(self, text):
+        return re.sub(r"[^a-z0-9]+", "-", text.lower()).strip("-")
 
     def on_close(self):
         self.save_runtime_preferences()
@@ -422,6 +442,68 @@ class EvalGui(tk.Tk):
         self.save_runtime_preferences()
         save_job_queue(self.jobs)
         self.refresh_job_queue()
+
+    def queue_full_round_robin(self):
+        try:
+            hands = self.read_positive_int(
+                self.round_robin_hands_var.get(),
+                "Round robin games per matchup")
+            mcts_a = self.read_positive_int(
+                self.mcts_a_var.get(), "Team 1 play iterations")
+            mcts_b = self.read_positive_int(
+                self.mcts_b_var.get(), "Team 2 play iterations")
+            bid_a = self.read_positive_int(self.bid_a_var.get(), "Team 1 bid budget")
+            bid_b = self.read_positive_int(self.bid_b_var.get(), "Team 2 bid budget")
+            worker_multiplier = self.read_positive_int(
+                self.worker_multiplier_var.get(), "Worker multiplier")
+            seed_base = int(self.seed_var.get())
+            early_stop = self.read_nonnegative_int(
+                self.early_stop_var.get(), "Early-stop deals")
+        except ValueError as error:
+            messagebox.showerror("Invalid Round Robin Settings", str(error))
+            return
+
+        profiles = list(self.competitor_options)
+        if len(profiles) < 2:
+            messagebox.showerror(
+                "Round Robin", "At least two tournament profiles are required.")
+            return
+
+        label_prefix = self.round_robin_label_prefix_var.get().strip() or "round_robin"
+        log_path = self.log_var.get().strip()
+        ledger_path = self.ledger_var.get().strip()
+        created = 0
+
+        for pair_index, (model_a, model_b) in enumerate(
+                itertools.combinations(profiles, 2), start=1):
+            pair_seed = seed_base + pair_index * 1000
+            pair_label = (
+                f"{label_prefix}_{self._slug(model_a)}_vs_{self._slug(model_b)}")
+            command = self.build_command(
+                model_a, model_b, hands, mcts_a, mcts_b,
+                bid_a, bid_b, worker_multiplier, pair_label, log_path,
+                pair_seed, ledger_path, early_stop)
+            self.jobs.append({
+                "id": uuid.uuid4().hex,
+                "status": "queued",
+                "label": pair_label,
+                "match": f"{model_a} vs {model_b}",
+                "created_at": time.time(),
+                "command": command,
+            })
+            created += 1
+
+        self.save_runtime_preferences()
+        save_job_queue(self.jobs)
+        self.refresh_job_queue()
+        total_games = created * hands
+        self.append_output(
+            f"\n[QUEUE] Round robin queued: {created} matchups, "
+            f"{hands} games each ({total_games} total scheduled games).\n")
+        messagebox.showinfo(
+            "Round Robin Queued",
+            f"Queued {created} matchups with {hands} games each "
+            f"({total_games} total games).")
 
     def refresh_job_queue(self):
         if not hasattr(self, "job_tree"):

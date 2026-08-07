@@ -13,6 +13,7 @@ import argparse
 import json
 import math
 import os
+from queue import Empty
 import sys
 import threading
 import time
@@ -173,8 +174,27 @@ def run_match(model_a, model_b, args):
     progress_every_deals = max(1, min(100, num_deals // 20 or 1))
 
     try:
-        for deal_idx in range(num_deals):
-            result = data_queue.get()
+        deals_done = 0
+        while deals_done < num_deals:
+            try:
+                result = data_queue.get(timeout=5.0)
+            except Empty:
+                now = time.time()
+                alive_workers = sum(1 for proc in processes if proc.is_alive())
+                if now - last_progress_log_at >= 60:
+                    elapsed_live = max(1e-9, now - start)
+                    print(
+                        f"[AdHoc Eval] Waiting for workers: {deals_done}/{num_deals} deals "
+                        f"({(100.0 * deals_done / num_deals):.1f}%) | "
+                        f"alive workers {alive_workers}/{len(processes)} | "
+                        f"elapsed {elapsed_live/60:.1f}m",
+                        flush=True)
+                    last_progress_log_at = now
+                if alive_workers == 0:
+                    raise RuntimeError(
+                        "All workers exited before producing all requested deals. "
+                        "Check earlier logs for the first worker-side failure.")
+                continue
             (v1a, v2a, team1_tricks_a, caller_team_a, is_loner_a,
              v1b, v2b, team1_tricks_b, caller_team_b, is_loner_b) = result[:10]
             if ledger_handle:
@@ -237,7 +257,7 @@ def run_match(model_a, model_b, args):
 
             paired_diffs.append(((v1a - v2a) + (v2b - v1b)) / 2.0)
 
-            deals_done = deal_idx + 1
+            deals_done += 1
             now = time.time()
             if (deals_done % progress_every_deals == 0
                     or now - last_progress_log_at >= 60

@@ -580,9 +580,12 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
 # ==========================================
 def run_gpu_server(nets_by_id, parent_pipes, device, stop_event):
     print(f"[GPU Server] Polling matrix engine initialized for {len(parent_pipes)} pipelines.")
+    live_pipes = list(parent_pipes)
     while not stop_event.is_set():
+        if not live_pipes:
+            break
         has_data = False
-        for p in parent_pipes:
+        for p in live_pipes:
             if p.poll():
                 has_data = True
                 break
@@ -591,15 +594,16 @@ def run_gpu_server(nets_by_id, parent_pipes, device, stop_event):
             time.sleep(0.0001)  # Micro-sleep to let more workers arrive and form a bigger batch
 
             pending = {net_id: {'tensors': [], 'pipes': []} for net_id in nets_by_id}
+            dead_pipes = []
 
-            for pipe in parent_pipes:
+            for pipe in live_pipes:
                 if pipe.poll():
                     try:
                         net_id, tensor = pipe.recv()
                         pending[net_id]['tensors'].append(tensor)
                         pending[net_id]['pipes'].append(pipe)
                     except (EOFError, RuntimeError, OSError):
-                        pass
+                        dead_pipes.append(pipe)
 
             for net_id, batch in pending.items():
                 if not batch['tensors']:
@@ -610,7 +614,14 @@ def run_gpu_server(nets_by_id, parent_pipes, device, stop_event):
                     action_probs = F.softmax(policy_logits, dim=1).cpu().numpy()
                     values = value_rating.cpu().numpy()
                 for idx, pipe in enumerate(batch['pipes']):
-                    pipe.send({'policy': action_probs[idx], 'value': values[idx][0]})
+                    try:
+                        pipe.send({'policy': action_probs[idx], 'value': values[idx][0]})
+                    except (EOFError, BrokenPipeError, RuntimeError, OSError):
+                        dead_pipes.append(pipe)
+
+            if dead_pipes:
+                dead_set = set(dead_pipes)
+                live_pipes = [pipe for pipe in live_pipes if pipe not in dead_set]
         else:
             time.sleep(0.001)
 
