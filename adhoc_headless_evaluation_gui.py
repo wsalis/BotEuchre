@@ -606,6 +606,56 @@ class EvalGui(tk.Tk):
             "Shared queue lease minutes")
         return int(minutes * 60)
 
+    def _normalize_shared_command(self, command):
+        if not isinstance(command, list) or not command:
+            return command
+
+        cmd = [str(part) for part in command]
+
+        # Always run with this node's interpreter when consuming shared jobs.
+        cmd[0] = sys.executable
+
+        # Replace foreign absolute script paths with the local evaluator script.
+        script_index = None
+        for idx, token in enumerate(cmd):
+            if token.lower().endswith("adhoc_headless_evaluation.py"):
+                script_index = idx
+                break
+        if script_index is not None:
+            cmd[script_index] = NEURAL_SCRIPT
+
+        def path_looks_windows(raw):
+            value = str(raw)
+            return (len(value) >= 3 and value[1] == ":" and value[2] in "\\/")
+
+        def should_fallback_path(raw_path):
+            value = str(raw_path).strip()
+            if not value:
+                return False
+            if path_looks_windows(value):
+                return True
+            parent = os.path.dirname(value)
+            if parent and not os.path.exists(parent):
+                return True
+            return False
+
+        for flag, default_path in (
+                ("--log", NODE_ADHOC_HISTORY_PATH),
+                ("--ledger", NODE_DEAL_LEDGER_PATH)):
+            try:
+                idx = cmd.index(flag)
+            except ValueError:
+                continue
+            if idx + 1 >= len(cmd):
+                continue
+            current = cmd[idx + 1]
+            if flag == "--ledger" and str(current).strip() == "":
+                continue
+            if should_fallback_path(current):
+                cmd[idx + 1] = default_path
+
+        return cmd
+
     def _load_jobs_from_backend(self):
         if self._shared_queue_enabled():
             path = self._shared_queue_path()
@@ -900,7 +950,10 @@ class EvalGui(tk.Tk):
         self.refresh_job_queue()
         self.append_output(
             f"\n[QUEUE] Starting {job['label']}: {job['match']}\n")
-        self.launch_command(job["command"])
+        launch_cmd = job["command"]
+        if self._shared_queue_enabled():
+            launch_cmd = self._normalize_shared_command(launch_cmd)
+        self.launch_command(launch_cmd)
 
     def remove_selected_job(self):
         selected = self.job_tree.selection()
