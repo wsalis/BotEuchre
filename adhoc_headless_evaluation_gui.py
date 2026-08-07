@@ -169,6 +169,46 @@ def _shared_queue_remove(path, job_ids):
     _run_with_sqlite_retry(operation)
 
 
+def _shared_queue_purge(path, include_running=False, stale_running_only=False):
+    _shared_queue_init(path)
+    counts = {"removed": 0, "running": 0, "stale_running": 0}
+    def operation():
+        nonlocal counts
+        with _sqlite_connect(path) as conn:
+            now = time.time()
+            counts["running"] = conn.execute(
+                "SELECT COUNT(*) FROM queue_jobs WHERE status='running'").fetchone()[0]
+            counts["stale_running"] = conn.execute(
+                """
+                SELECT COUNT(*) FROM queue_jobs
+                WHERE status='running'
+                  AND lease_expires_at IS NOT NULL
+                  AND lease_expires_at < ?
+                """,
+                (now,),
+            ).fetchone()[0]
+
+            if include_running:
+                counts["removed"] = conn.execute(
+                    "DELETE FROM queue_jobs").rowcount
+            elif stale_running_only:
+                counts["removed"] = conn.execute(
+                    """
+                    DELETE FROM queue_jobs
+                    WHERE status!='running'
+                       OR (status='running'
+                           AND lease_expires_at IS NOT NULL
+                           AND lease_expires_at < ?)
+                    """,
+                    (now,),
+                ).rowcount
+            else:
+                counts["removed"] = conn.execute(
+                    "DELETE FROM queue_jobs WHERE status!='running'").rowcount
+    _run_with_sqlite_retry(operation)
+    return counts
+
+
 def _shared_queue_claim_next(path, owner_id, lease_seconds):
     _shared_queue_init(path)
     claimed = None
@@ -520,6 +560,9 @@ class EvalGui(tk.Tk):
         self.job_tree.pack(side=tk.LEFT, fill=tk.X, expand=True)
         ttk.Button(
             queue_frame, text="Remove", command=self.remove_selected_job).pack(
+                side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(
+            queue_frame, text="Purge Queue", command=self.purge_queue).pack(
                 side=tk.RIGHT, padx=(8, 0))
 
         output_frame = ttk.LabelFrame(outer, text="Evaluator Output", padding=8)
@@ -874,6 +917,64 @@ class EvalGui(tk.Tk):
             self.jobs = [job for job in self.jobs if job["id"] not in selected_ids]
             save_job_queue(self.jobs)
         self.refresh_job_queue()
+
+    def purge_queue(self):
+        if self._shared_queue_enabled():
+            warning = (
+                "Purge all non-running shared queue jobs?\n\n"
+                "Running jobs are preserved and can be reclaimed later if their lease expires.")
+        else:
+            warning = (
+                "Purge all queued/interrupted/failed/completed local jobs?\n\n"
+                "Any currently running job is preserved.")
+
+        if not messagebox.askyesno("Purge Queue", warning):
+            return
+
+        if self._shared_queue_enabled():
+            path = self._shared_queue_path()
+            result = _shared_queue_purge(path)
+
+            if result["running"] > 0 and result["stale_running"] > 0:
+                clear_stale = messagebox.askyesno(
+                    "Purge Queue",
+                    f"{result['running']} running entries remain. "
+                    f"{result['stale_running']} appear stale (lease expired).\n\n"
+                    "Clear stale running entries now?")
+                if clear_stale:
+                    result = _shared_queue_purge(
+                        path, include_running=False, stale_running_only=True)
+
+            if result["running"] > 0:
+                force_clear = messagebox.askyesno(
+                    "Purge Queue",
+                    "Some running entries still remain.\n\n"
+                    "Force clear ALL remaining running entries? "
+                    "Only do this if you are sure no nodes are actively processing.")
+                if force_clear:
+                    result = _shared_queue_purge(path, include_running=True)
+
+            self.jobs = _shared_queue_list(self._shared_queue_path())
+            self.refresh_job_queue()
+            messagebox.showinfo(
+                "Purge Queue",
+                f"Removed {result['removed']} jobs. "
+                f"Running jobs kept: {result['running']}.")
+            return
+
+        kept = []
+        removed = 0
+        for job in self.jobs:
+            if job.get("status") == "running":
+                kept.append(job)
+            else:
+                removed += 1
+        self.jobs = kept
+        save_job_queue(self.jobs)
+        self.refresh_job_queue()
+        messagebox.showinfo(
+            "Purge Queue",
+            f"Removed {removed} jobs. Running jobs kept: {len(kept)}.")
 
     def launch_command(self, command):
         self.set_running(True)
