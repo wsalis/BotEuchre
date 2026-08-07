@@ -54,11 +54,27 @@ LAB_SETTINGS_DEFAULTS = {
 
 
 def _sqlite_connect(path):
-    conn = sqlite3.connect(path, timeout=30)
+    conn = sqlite3.connect(path, timeout=60)
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # WAL is fragile on network shares (especially mixed Windows/macOS SMB).
+    # Use rollback journal mode for safer cross-host locking semantics.
+    conn.execute("PRAGMA journal_mode=DELETE")
     conn.execute("PRAGMA synchronous=NORMAL")
+    conn.execute("PRAGMA busy_timeout=60000")
     return conn
+
+
+def _run_with_sqlite_retry(operation, retries=5, delay_seconds=0.2):
+    for attempt in range(retries):
+        try:
+            return operation()
+        except sqlite3.OperationalError as error:
+            message = str(error).lower()
+            if "locked" not in message and "busy" not in message:
+                raise
+            if attempt == retries - 1:
+                raise
+            time.sleep(delay_seconds * (attempt + 1))
 
 
 def _shared_queue_init(path):
@@ -91,15 +107,17 @@ def _shared_queue_init(path):
 
 def _shared_queue_list(path):
     _shared_queue_init(path)
-    with _sqlite_connect(path) as conn:
-        rows = conn.execute(
-            """
-            SELECT id, status, label, match, created_at, started_at, finished_at,
-                   return_code, failure_reason, lease_owner, lease_expires_at,
-                   attempts, command_json
-            FROM queue_jobs
-            ORDER BY created_at ASC
-            """).fetchall()
+    def operation():
+        with _sqlite_connect(path) as conn:
+            return conn.execute(
+                """
+                SELECT id, status, label, match, created_at, started_at, finished_at,
+                       return_code, failure_reason, lease_owner, lease_expires_at,
+                       attempts, command_json
+                FROM queue_jobs
+                ORDER BY created_at ASC
+                """).fetchall()
+    rows = _run_with_sqlite_retry(operation)
     jobs = []
     for row in rows:
         job = dict(row)
@@ -113,22 +131,24 @@ def _shared_queue_list(path):
 
 def _shared_queue_enqueue(path, job):
     _shared_queue_init(path)
-    with _sqlite_connect(path) as conn:
-        conn.execute(
-            """
-            INSERT INTO queue_jobs(
-                id, status, label, match, created_at, command_json
-            ) VALUES(?, ?, ?, ?, ?, ?)
-            """,
-            (
-                job["id"],
-                job.get("status", "queued"),
-                job.get("label", ""),
-                job.get("match", ""),
-                float(job.get("created_at", time.time())),
-                json.dumps(job.get("command", []), ensure_ascii=False),
-            ),
-        )
+    def operation():
+        with _sqlite_connect(path) as conn:
+            conn.execute(
+                """
+                INSERT INTO queue_jobs(
+                    id, status, label, match, created_at, command_json
+                ) VALUES(?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    job["id"],
+                    job.get("status", "queued"),
+                    job.get("label", ""),
+                    job.get("match", ""),
+                    float(job.get("created_at", time.time())),
+                    json.dumps(job.get("command", []), ensure_ascii=False),
+                ),
+            )
+    _run_with_sqlite_retry(operation)
 
 
 def _shared_queue_remove(path, job_ids):
@@ -136,56 +156,65 @@ def _shared_queue_remove(path, job_ids):
         return
     _shared_queue_init(path)
     placeholders = ",".join("?" for _ in job_ids)
-    with _sqlite_connect(path) as conn:
-        conn.execute(
-            f"""
-            DELETE FROM queue_jobs
-            WHERE id IN ({placeholders})
-              AND status != 'running'
-            """,
-            tuple(job_ids),
-        )
+    def operation():
+        with _sqlite_connect(path) as conn:
+            conn.execute(
+                f"""
+                DELETE FROM queue_jobs
+                WHERE id IN ({placeholders})
+                  AND status != 'running'
+                """,
+                tuple(job_ids),
+            )
+    _run_with_sqlite_retry(operation)
 
 
 def _shared_queue_claim_next(path, owner_id, lease_seconds):
     _shared_queue_init(path)
-    now = time.time()
-    with _sqlite_connect(path) as conn:
-        conn.execute("BEGIN IMMEDIATE")
-        row = conn.execute(
-            """
-            SELECT id, command_json
-            FROM queue_jobs
-            WHERE status IN ('queued', 'interrupted')
-               OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?)
-            ORDER BY created_at ASC
-            LIMIT 1
-            """,
-            (now,),
-        ).fetchone()
-        if row is None:
+    claimed = None
+    def operation():
+        nonlocal claimed
+        now = time.time()
+        with _sqlite_connect(path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                """
+                SELECT id, command_json
+                FROM queue_jobs
+                WHERE status IN ('queued', 'interrupted')
+                   OR (status = 'running' AND lease_expires_at IS NOT NULL AND lease_expires_at < ?)
+                ORDER BY created_at ASC
+                LIMIT 1
+                """,
+                (now,),
+            ).fetchone()
+            if row is None:
+                conn.commit()
+                claimed = None
+                return
+            conn.execute(
+                """
+                UPDATE queue_jobs
+                SET status='running',
+                    started_at=?,
+                    lease_owner=?,
+                    lease_expires_at=?,
+                    attempts=attempts+1,
+                    finished_at=NULL,
+                    return_code=NULL,
+                    failure_reason=NULL
+                WHERE id=?
+                """,
+                (now, owner_id, now + lease_seconds, row["id"]),
+            )
+            claimed = conn.execute(
+                "SELECT * FROM queue_jobs WHERE id=?",
+                (row["id"],),
+            ).fetchone()
             conn.commit()
-            return None
-        conn.execute(
-            """
-            UPDATE queue_jobs
-            SET status='running',
-                started_at=?,
-                lease_owner=?,
-                lease_expires_at=?,
-                attempts=attempts+1,
-                finished_at=NULL,
-                return_code=NULL,
-                failure_reason=NULL
-            WHERE id=?
-            """,
-            (now, owner_id, now + lease_seconds, row["id"]),
-        )
-        claimed = conn.execute(
-            "SELECT * FROM queue_jobs WHERE id=?",
-            (row["id"],),
-        ).fetchone()
-        conn.commit()
+    _run_with_sqlite_retry(operation)
+    if claimed is None:
+        return None
     job = dict(claimed)
     try:
         job["command"] = json.loads(job.pop("command_json"))
@@ -196,36 +225,40 @@ def _shared_queue_claim_next(path, owner_id, lease_seconds):
 
 def _shared_queue_heartbeat(path, job_id, owner_id, lease_seconds):
     _shared_queue_init(path)
-    now = time.time()
-    with _sqlite_connect(path) as conn:
-        conn.execute(
-            """
-            UPDATE queue_jobs
-            SET lease_expires_at=?
-            WHERE id=? AND status='running' AND lease_owner=?
-            """,
-            (now + lease_seconds, job_id, owner_id),
-        )
+    def operation():
+        now = time.time()
+        with _sqlite_connect(path) as conn:
+            conn.execute(
+                """
+                UPDATE queue_jobs
+                SET lease_expires_at=?
+                WHERE id=? AND status='running' AND lease_owner=?
+                """,
+                (now + lease_seconds, job_id, owner_id),
+            )
+    _run_with_sqlite_retry(operation)
 
 
 def _shared_queue_finish(path, job_id, owner_id, return_code, failure_reason=None):
     _shared_queue_init(path)
-    now = time.time()
-    status = "completed" if return_code == 0 else "failed"
-    with _sqlite_connect(path) as conn:
-        conn.execute(
-            """
-            UPDATE queue_jobs
-            SET status=?,
-                finished_at=?,
-                return_code=?,
-                failure_reason=?,
-                lease_owner=NULL,
-                lease_expires_at=NULL
-            WHERE id=? AND lease_owner=?
-            """,
-            (status, now, int(return_code), failure_reason, job_id, owner_id),
-        )
+    def operation():
+        now = time.time()
+        status = "completed" if return_code == 0 else "failed"
+        with _sqlite_connect(path) as conn:
+            conn.execute(
+                """
+                UPDATE queue_jobs
+                SET status=?,
+                    finished_at=?,
+                    return_code=?,
+                    failure_reason=?,
+                    lease_owner=NULL,
+                    lease_expires_at=NULL
+                WHERE id=? AND lease_owner=?
+                """,
+                (status, now, int(return_code), failure_reason, job_id, owner_id),
+            )
+    _run_with_sqlite_retry(operation)
 
 def prepare_lab_state():
     prepare_node_state()
