@@ -48,6 +48,8 @@ LAB_SETTINGS_DEFAULTS = {
     "round_robin_label_prefix": "round_robin",
     "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
     "hybrid_profiles_v1_seen": False,
+    "iron_oracle_v1_seen": False,
+    "iron_profiles_v1_seen": False,
     "shared_queue_enabled": False,
     "shared_queue_path": os.path.join(
         NODE_STATE_DIR, "bot_euchre_headless_jobs.sqlite3"),
@@ -451,6 +453,8 @@ class EvalGui(tk.Tk):
             value=self._active_profiles_summary())
         self.shared_queue_enabled_var = tk.BooleanVar(
             value=bool(self.lab_settings.get("shared_queue_enabled", False)))
+        self.equalize_iterations_var = tk.BooleanVar(
+            value=str(self.lab_settings.get("equalize_iterations", "False")).lower() == "true")
         self.shared_queue_path_var = tk.StringVar(
             value=self.lab_settings.get(
                 "shared_queue_path",
@@ -667,13 +671,22 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["hybrid_profiles_v1_seen"] = True
+        if not self.lab_settings.get("iron_oracle_v1_seen", False):
+            if "Iron Oracle" in self.all_profiles and "Iron Oracle" not in selected:
+                selected.append("Iron Oracle")
+            self.lab_settings["iron_oracle_v1_seen"] = True
+        if not self.lab_settings.get("iron_profiles_v1_seen", False):
+            for profile in ("Iron Anchor", "Iron Sleuth", "Iron Closer"):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["iron_profiles_v1_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
 
     def _recommended_core_profiles(self):
         preferred = [
-            "Ironclad", "Iron Monte", "Monte Prime", "Iron Solver",
+            "Ironclad", "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle",
             "Risk Manager", "Unanimous Council", "The Closer", "The MC",
             "Arbiter",
         ]
@@ -1064,10 +1077,14 @@ class EvalGui(tk.Tk):
         ttk.Entry(watchdog, textvariable=self.stall_minutes_var, width=8).pack(side=tk.LEFT)
 
         ttk.Checkbutton(
+            runtime, text="Equalize play iterations across profiles",
+            variable=self.equalize_iterations_var).grid(
+                row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        ttk.Checkbutton(
             runtime, text="Use shared SQLite queue (cluster mode)",
             variable=self.shared_queue_enabled_var,
             command=self._on_shared_queue_toggle).grid(
-                row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
+                row=7, column=0, columnspan=4, sticky="w", pady=(6, 2))
         ttk.Label(runtime, text="Shared queue DB / lease minutes").grid(
             row=7, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(runtime, textvariable=self.shared_queue_path_var).grid(
@@ -1327,11 +1344,14 @@ class EvalGui(tk.Tk):
         save_lab_settings({
             "ledger_path": self.ledger_var.get().strip(),
             "early_stop_min_deals": self.early_stop_var.get().strip(),
+            "equalize_iterations": str(bool(self.equalize_iterations_var.get())),
             "max_runtime_minutes": self.max_runtime_var.get().strip(),
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
             "active_profiles": list(self.active_profiles),
             "hybrid_profiles_v1_seen": True,
+            "iron_oracle_v1_seen": True,
+            "iron_profiles_v1_seen": True,
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
             "round_robin_profiles": list(self.round_robin_profiles),
@@ -1376,7 +1396,8 @@ class EvalGui(tk.Tk):
         command = self.build_command(
             model_a, model_b, hands, mcts_a, mcts_b, bid_a, bid_b,
             worker_multiplier, label, log_path, seed,
-            self.ledger_var.get().strip(), early_stop)
+            self.ledger_var.get().strip(), early_stop,
+            self.equalize_iterations_var.get())
         self.save_runtime_preferences()
 
         self.append_output(f"\n[GUI] Team 1: {model_a} | play={mcts_a} | bid={bid_a}\n")
@@ -1403,7 +1424,8 @@ class EvalGui(tk.Tk):
         command = self.build_command(
             model_a, model_b, hands, mcts_a, mcts_b, bid_a, bid_b,
             worker_multiplier, label, self.log_var.get().strip(), seed,
-            self.ledger_var.get().strip(), early_stop)
+            self.ledger_var.get().strip(), early_stop,
+            self.equalize_iterations_var.get())
         return command, label, f"{model_a} vs {model_b}"
 
     def selected_competitors(self):
@@ -1475,7 +1497,8 @@ class EvalGui(tk.Tk):
             command = self.build_command(
                 model_a, model_b, hands, mcts_a, mcts_b,
                 bid_a, bid_b, worker_multiplier, pair_label, log_path,
-                pair_seed, ledger_path, early_stop)
+                pair_seed, ledger_path, early_stop,
+                self.equalize_iterations_var.get())
             new_jobs.append({
                 "id": uuid.uuid4().hex,
                 "status": "queued",
@@ -1664,7 +1687,8 @@ class EvalGui(tk.Tk):
     def build_command(self, model_a, model_b, hands, mcts_a, mcts_b,
                       bid_a, bid_b, worker_multiplier, label, log_path,
                       seed=20260801,
-                      ledger_path="", early_stop_min_deals=0):
+                      ledger_path="", early_stop_min_deals=0,
+                      equalize_iterations=False):
         command = [
             sys.executable, "-u", NEURAL_SCRIPT, model_a, model_b,
             "--hands", str(hands),
@@ -1678,6 +1702,8 @@ class EvalGui(tk.Tk):
         if early_stop_min_deals:
             command.extend([
                 "--early-stop-min-deals", str(early_stop_min_deals)])
+        if equalize_iterations:
+            command.append("--equalize-iterations")
         return command
 
     def read_positive_int(self, raw_value, field_name):

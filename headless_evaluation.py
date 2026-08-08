@@ -33,9 +33,9 @@ from BotEuchreGUI import (
     SimState, Card, CheemsNeuralNet, encode_state_to_tensor,
     ALL_DECK_KEYS, SUITS_T, RANKS_T, SAME_COLOR_T, HAS_TORCH,
     POLICY_SIZE, BID_PASS, BID_CALL_BASE, BID_ALONE_BASE,
-    run_auction, legal_bid_actions,
+    run_auction, legal_bid_actions, choose_iron_oracle_bid,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
-    run_bid_mcts
+    run_bid_mcts, choose_iron_profile_move
 )
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
@@ -305,7 +305,26 @@ def run_eval_mcts(sim_state, gpu_pipe, net_id, iterations, current_played_cards,
     if (profile_name == "Risk Manager" and len(ranked) > 1
             and ranked[0].visits - ranked[1].visits <= iterations * 0.05):
         return ranked[1].move
-    return ranked[0].move
+    own_score = t1_score if root_player in (0, 2) else t2_score
+    opponent_score = t2_score if root_player in (0, 2) else t1_score
+
+    def sleuth_key(item):
+        move, _ = item
+        effective = sim_state.get_effective_suit(move)
+        if sim_state.trick:
+            led_suit = sim_state.get_effective_suit(sim_state.trick[0][1])
+            if effective == sim_state.trump_suit and led_suit != sim_state.trump_suit:
+                return 1
+            if effective == led_suit:
+                return 0
+        return 0 if effective != sim_state.trump_suit else 1
+
+    ranked_moves = [(node.move, float(node.visits)) for node in ranked]
+    chosen = choose_iron_profile_move(
+        profile_name, ranked_moves, max(3, iterations // 20),
+        score_gap=own_score - opponent_score,
+        sleuth_key=sleuth_key)
+    return chosen[0]
 
 
 # ==========================================
@@ -337,7 +356,9 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
     if profile_name == "Hoyle":
         return "Arbiter"
-    if profile_name in {"Iron Monte", "Iron Solver"}:
+    if profile_name in {"Iron Monte", "Iron Solver", "Iron Oracle"}:
+        return "Ironclad"
+    if profile_name in {"Iron Anchor", "Iron Sleuth", "Iron Closer"}:
         return "Ironclad"
     if profile_name == "Monte Prime":
         return "Ironclad"
@@ -364,10 +385,21 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
 
 def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
                          t1_score, t2_score):
-    if profile_name != "Scoreboard General":
-        return 0.0, 0.0
     own_score = t1_score if seat in (0, 2) else t2_score
     opponent_score = t2_score if seat in (0, 2) else t1_score
+    if profile_name == "Iron Anchor":
+        return 0.06, 0.03
+    if profile_name == "Iron Sleuth":
+        return -0.025, -0.01
+    if profile_name == "Iron Closer":
+        score_gap = own_score - opponent_score
+        if score_gap >= 2 or own_score >= 8:
+            return -0.03, -0.01
+        if score_gap <= -2:
+            return 0.05, 0.02
+        return 0.01, 0.0
+    if profile_name != "Scoreboard General":
+        return 0.0, 0.0
     score_gap = own_score - opponent_score
     call_margin = loner_margin = 0.0
     if score_gap >= 2 or own_score >= 8:
@@ -467,7 +499,8 @@ def _hoyle_discard_index(hand_after_pickup, trump_suit):
 
 
 def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=None,
-                    return_details=False, profiles=("Arbiter", "Arbiter")):
+                    return_details=False, profiles=("Arbiter", "Arbiter"),
+                    equalize_iterations=False):
     """Plays a pre-generated deal. Team 1 = seats 0/2, Team 2 = seats 1/3.
     net_id 0 = current brain, net_id 1 = baseline brain.
 
@@ -538,6 +571,18 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             rollouts *= 2
         call_margin, loner_margin = headless_bid_margins(
             profile, seat, round_num, dealer_idx, t1_score, t2_score)
+        if profile == "Iron Oracle":
+            tensor = encode_bid_state(
+                hands[seat], seat, up_card, dealer_idx,
+                round_num, passed_seats, t1_score, t2_score)
+            policy_probs, _ = nn_eval_for(brain_id)(tensor)
+            visits, _ = run_bid_mcts(
+                hands[seat], up_card, dealer_idx, seat, round_num, passed_seats,
+                t1_score, t2_score, nn_eval_for(brain_id),
+                rollouts=max(rollouts * 3, 300), known_hands=None,
+                call_margin=call_margin, loner_margin=loner_margin)
+            return choose_iron_oracle_bid(
+                legal_actions, policy_probs, visits)
         if rollouts > 0:
             visits, _ = run_bid_mcts(
                 hands[seat], up_card, dealer_idx, seat, round_num, passed_seats,
@@ -620,25 +665,27 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         if active_profile == "Hoyle":
             chosen_move = sim.get_heuristic_move()
         else:
-            if active_profile == "Iron Monte":
-                # Iron Monte contract phase is Ironclad, but play phase is
-                # intentionally a deeper Ironclad-guided MCTS search regime.
-                active_iterations = max(active_iterations * 2, 400)
-            elif active_profile == "Monte Prime":
-                # Keep Ironclad's contract discipline, then use the Council
-                # ensemble as policy/value guidance for a deeper play search.
-                active_iterations = max(active_iterations * 3, 600)
-            elif active_profile == "Iron Solver":
-                # Search like Iron Monte early, then spend heavily once only
-                # two tricks remain and the hidden-card space is much smaller.
-                completed_tricks = sim.team1_tricks + sim.team2_tricks
-                active_iterations = max(
-                    active_iterations * (6 if completed_tricks >= 3 else 2),
-                    1200 if completed_tricks >= 3 else 400)
-            if active_profile == "Unanimous Council":
-                active_iterations *= 2
+            if not equalize_iterations:
+                if active_profile == "Iron Monte":
+                    # Iron Monte contract phase is Ironclad, but play phase is
+                    # intentionally a deeper Ironclad-guided MCTS search regime.
+                    active_iterations = max(active_iterations * 2, 400)
+                elif active_profile in {"Monte Prime", "Iron Oracle"}:
+                    # Keep Ironclad's contract discipline, then use the Council
+                    # ensemble as policy/value guidance for a deeper play search.
+                    active_iterations = max(active_iterations * 3, 600)
+                elif active_profile == "Iron Solver":
+                    # Search like Iron Monte early, then spend heavily once only
+                    # two tricks remain and the hidden-card space is much smaller.
+                    completed_tricks = sim.team1_tricks + sim.team2_tricks
+                    active_iterations = max(
+                        active_iterations * (6 if completed_tricks >= 3 else 2),
+                        1200 if completed_tricks >= 3 else 400)
+                if active_profile == "Unanimous Council":
+                    active_iterations *= 2
             active_brain = (
-                "Unanimous Council" if active_profile == "Monte Prime"
+                "Unanimous Council"
+                if active_profile in {"Monte Prime", "Iron Oracle"}
                 else brain_for_seat(sim.current_turn, caller_idx))
 
             chosen_move = run_eval_mcts(
@@ -748,7 +795,7 @@ def run_gpu_server(nets_by_id, parent_pipes, device, stop_event):
 # ==========================================
 def worker_process_loop(worker_id, gpu_pipe, num_deals_assigned, iterations, results_queue,
                         bid_rollouts=None, seed_base=None, include_details=False,
-                        profiles=("Arbiter", "Arbiter")):
+                        profiles=("Arbiter", "Arbiter"), equalize_iterations=False):
     worker_seed = (
         int(seed_base) + worker_id if seed_base is not None
         else (os.getpid() * int(time.time())) % 123456789)
@@ -770,11 +817,11 @@ def worker_process_loop(worker_id, gpu_pipe, num_deals_assigned, iterations, res
             result_a = play_dealt_hand(
                 deal, gpu_pipe, iterations, current_is_team1=True,
                 bid_rollouts=bid_rollouts, return_details=include_details,
-                profiles=profiles)
+                profiles=profiles, equalize_iterations=equalize_iterations)
             result_b = play_dealt_hand(
                 deal, gpu_pipe, iterations, current_is_team1=False,
                 bid_rollouts=bid_rollouts, return_details=include_details,
-                profiles=profiles)
+                profiles=profiles, equalize_iterations=equalize_iterations)
             combined = result_a[:5] + result_b[:5]
             if include_details:
                 ledger = {

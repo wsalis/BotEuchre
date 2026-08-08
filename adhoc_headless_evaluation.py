@@ -110,6 +110,8 @@ def run_match(model_a, model_b, args):
           f"play iters A/B={args.mcts_a}/{args.mcts_b}, "
           f"bid rollouts A/B={args.bid_rollouts_a}/{args.bid_rollouts_b}, "
           f"{active_workers} workers, device={device}")
+    if args.equalize_iterations:
+        print("[AdHoc Eval] Equalized play iterations: hybrid profiles will use the same base budget as the others")
 
     start = time.time()
     data_queue = mp.Queue()
@@ -130,7 +132,7 @@ def run_match(model_a, model_b, args):
             args=(worker_id, child_pipes[worker_id], count,
                   (args.mcts_a, args.mcts_b), data_queue,
                   (args.bid_rollouts_a, args.bid_rollouts_b), args.seed,
-                bool(args.ledger), (label_a, label_b)))
+                bool(args.ledger), (label_a, label_b), args.equalize_iterations))
         proc.daemon = True
         proc.start()
         processes.append(proc)
@@ -401,6 +403,8 @@ def parse_args():
     parser.add_argument("--bid-rollouts-b", type=int, default=0, help="Model B bid MCTS rollouts; 0 uses raw bid-head argmax")
     parser.add_argument("--worker-multiplier", type=int, default=6, help="CPU worker oversubscription multiplier")
     parser.add_argument("--seed", type=int, default=20260801, help="Deterministic worker/deal seed")
+    parser.add_argument("--equalize-iterations", action="store_true",
+                        help="Force all profiles to use the same base MCTS iteration budget")
     parser.add_argument("--label", default="adhoc_check", help="Label recorded in the log entry")
     parser.add_argument("--log", default=NODE_ADHOC_HISTORY_PATH, help="JSONL log path; use an empty string to skip logging")
     parser.add_argument("--ledger", default=NODE_DEAL_LEDGER_PATH, help="Optional per-deal JSONL ledger path")

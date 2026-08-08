@@ -813,8 +813,12 @@ def profile_checkpoint_paths(profile_name):
         "Counterpuncher": [IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Risk Manager": [IRONCLAD_WEIGHTS_PATH],
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Closer": [IRONCLAD_WEIGHTS_PATH],
         "Monte Prime": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Iron Solver": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Oracle": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Saboteur": [IRONCLAD_WEIGHTS_PATH],
         "Scoreboard General": [ARBITER_WEIGHTS_PATH],
         "Copycat": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
@@ -1366,8 +1370,12 @@ AI_PROFILE_CHOICES = {
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
+    "Iron Anchor (Conservative Router)": "Keeps Ironclad's contract discipline but leans toward safer, lower-risk play choices when the top two moves are close.",
+    "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
+    "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
     "Monte Prime (Council MCTS Hybrid)": "Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance.",
     "Iron Solver (Endgame Hybrid)": "Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks.",
+    "Iron Oracle (Bid-Arbitration Hybrid)": "Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play.",
 }
 LEGACY_PROFILE_FALLBACKS = {
     "Noob": "Arbiter",
@@ -1382,9 +1390,11 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Copycat", "Wildcard",
-    "Iron Monte", "Monte Prime", "Iron Solver",
+    "Iron Monte", "Iron Anchor", "Iron Sleuth", "Iron Closer",
+    "Monte Prime", "Iron Solver", "Iron Oracle",
 }
-HYBRID_MCTS_PROFILES = {"Iron Monte", "Monte Prime", "Iron Solver"}
+HYBRID_MCTS_PROFILES = {
+    "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle"}
 HEADLESS_MCTS_PROFILES = {
     "The MC",
 }
@@ -1394,6 +1404,21 @@ TOURNAMENT_PROFILES = tuple(
 HEADLESS_TOURNAMENT_PROFILES = tuple(
     profile for profile in TOURNAMENT_PROFILES
     if profile in NEURAL_PROFILES or profile in HEADLESS_MCTS_PROFILES)
+
+
+def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
+                             sleuth_key=None):
+    if not ranked_moves:
+        return None
+    if len(ranked_moves) < 2 or ranked_moves[0][1] - ranked_moves[1][1] > tie_margin:
+        return ranked_moves[0]
+    if profile == "Iron Anchor":
+        return ranked_moves[1]
+    if profile == "Iron Sleuth" and sleuth_key is not None:
+        return min(ranked_moves[:2], key=sleuth_key)
+    if profile == "Iron Closer" and score_gap <= -2:
+        return ranked_moves[1]
+    return ranked_moves[0]
 
 
 def normalize_profile_name(profile_name, default="Arbiter", allow_human=False):
@@ -1460,6 +1485,13 @@ def load_active_tournament_profiles(default_profiles=None):
         for profile in ("Monte Prime", "Iron Solver"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
+    if not settings.get("iron_oracle_v1_seen", False):
+        if "Iron Oracle" in profiles and "Iron Oracle" not in filtered:
+            filtered.append("Iron Oracle")
+    if not settings.get("iron_profiles_v1_seen", False):
+        for profile in ("Iron Anchor", "Iron Sleuth", "Iron Closer"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
     if len(filtered) < 2:
         return profiles
     return filtered
@@ -1482,6 +1514,31 @@ def random_tournament_matchup(
         raise ValueError("At least two tournament profiles are required.")
     return chooser(matchups)
 
+
+def choose_iron_oracle_bid(legal_actions, policy_probs, search_visits):
+    """Keep Ironclad's policy choice unless a close decision gets a strong
+    contradictory verdict from deeper bid search."""
+    policy_ranked = sorted(
+        legal_actions, key=lambda action: policy_probs[action], reverse=True)
+    primary = policy_ranked[0]
+    policy_gap = (
+        float(policy_probs[primary] - policy_probs[policy_ranked[1]])
+        if len(policy_ranked) > 1 else 1.0)
+    if policy_gap > 0.10 or not search_visits:
+        return primary
+
+    search_ranked = sorted(
+        search_visits, key=search_visits.get, reverse=True)
+    searched = search_ranked[0]
+    search_gap = (
+        float(search_visits[searched] - search_visits[search_ranked[1]])
+        if len(search_ranked) > 1 else float(search_visits[searched]))
+    if (searched != primary
+            and search_visits[searched] >= 0.55
+            and search_gap >= 0.15):
+        return searched
+    return primary
+
 def resolve_tournament_seed(
         use_random_seed, entered_seed, generator=None):
     if use_random_seed:
@@ -1500,7 +1557,9 @@ PROFILE_CATEGORIES = {
     "Unanimous Council": "Ensemble", "The Closer": "Router",
     "Risk Manager": "Router", "Copycat": "Learner",
     "Iron Monte": "Hybrid", "Monte Prime": "Hybrid",
-    "Iron Solver": "Hybrid",
+    "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
+    "Iron Anchor": "Router", "Iron Sleuth": "Router",
+    "Iron Closer": "Router",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
 }
 HELP_TOPICS = [
@@ -3270,7 +3329,7 @@ class ISMCTS_Multiprocessing_Agent:
         if profile in HYBRID_MCTS_PROFILES:
             base_iterations = (ui_game.hint_neural_play_iters if player_idx == 0
                                else ui_game.table_neural_play_iters)
-            if profile == "Monte Prime":
+            if profile in {"Monte Prime", "Iron Oracle"}:
                 iterations = max(base_iterations * 3, 600)
             elif (profile == "Iron Solver"
                   and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
@@ -3890,7 +3949,9 @@ class EuchreGame(tk.Tk):
             return self.ironclad_brain
         if profile in {"Iron Monte", "Iron Solver"}:
             return self.ironclad_brain
-        if profile == "Monte Prime":
+        if profile in {"Iron Anchor", "Iron Sleuth", "Iron Closer"}:
+            return self.ironclad_brain
+        if profile in {"Monte Prime", "Iron Oracle"}:
             if self.game_state in {"bidding_r1", "bidding_r2", "discarding"}:
                 return self.ironclad_brain
             return self.unanimous_council_brain
@@ -3913,6 +3974,48 @@ class EuchreGame(tk.Tk):
         if player_idx % 2 == 0:
             return self.team1_score, self.team2_score
         return self.team2_score, self.team1_score
+
+    def _profile_move_choice(self, player_idx, ranked_moves, state_pack=None):
+        profile = self.ai_profiles.get(str(player_idx), "Arbiter")
+        if state_pack is None:
+            own_score, opponent_score = self._scores_for_player(player_idx)
+            hand = self.hands[player_idx]
+            trick = self.trick
+            trump_suit = self.trump_suit
+        else:
+            team1_score = int(state_pack.get('team1_score', self.team1_score))
+            team2_score = int(state_pack.get('team2_score', self.team2_score))
+            if player_idx % 2 == 0:
+                own_score, opponent_score = team1_score, team2_score
+            else:
+                own_score, opponent_score = team2_score, team1_score
+            packed_hands = state_pack.get('hands', [[], [], [], []])
+            hand = [Card(rank, suit) for rank, suit in packed_hands[player_idx]]
+            trick = [(seat, Card(rank, suit))
+                     for seat, rank, suit in state_pack.get('trick', [])]
+            trump_suit = state_pack.get('trump_suit')
+
+        def effective_suit(card):
+            if (trump_suit and card.rank == 'J'
+                    and card.suit == SAME_COLOR_T[trump_suit]):
+                return trump_suit
+            return card.suit
+
+        def sleuth_key(item):
+            card = hand[item[0]]
+            effective = effective_suit(card)
+            if trick:
+                led_suit = effective_suit(trick[0][1])
+                if effective == trump_suit and led_suit != trump_suit:
+                    return 1
+                if effective == led_suit:
+                    return 0
+            return 0 if effective != trump_suit else 1
+
+        return choose_iron_profile_move(
+            profile, ranked_moves, 4.5,
+            score_gap=own_score - opponent_score,
+            sleuth_key=sleuth_key)
 
     def _hoyle_bid_decision(self, player_idx, round_num, is_stuck):
         hand = self.hands[player_idx]
@@ -4196,10 +4299,11 @@ class EuchreGame(tk.Tk):
         if ranked_moves:
             profile = self.ai_profiles.get(str(player_idx))
             if (profile == "Risk Manager" and len(ranked_moves) > 1
-                  and ranked_moves[0][1] - ranked_moves[1][1] <= 5.0):
+                    and ranked_moves[0][1] - ranked_moves[1][1] <= 5.0):
                 chosen = ranked_moves[1]
             else:
-                chosen = ranked_moves[0]
+                chosen = self._profile_move_choice(
+                    player_idx, ranked_moves, state_pack=state_pack)
             return chosen[0], chosen[1]
         
         fallback = random.choice(legal_indices)
@@ -5447,6 +5551,7 @@ class EuchreGame(tk.Tk):
             label = self._profile_display_label(profile)
             description = AI_PROFILE_CHOICES.get(label, "")
             route = "Pure MCTS" if profile == "The MC" else (
+                "Hybrid: conservative bid arbitration + Council-guided deep MCTS" if profile == "Iron Oracle" else
                 "Hybrid: Ironclad contract + Council-guided deep MCTS" if profile == "Monte Prime" else
                 "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
                 "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
@@ -7440,6 +7545,18 @@ class EuchreGame(tk.Tk):
         return auction_passed_seats(self.dealer_idx, self.passed_count)
 
     def _bid_style_margins(self, player_idx, round_num, profile):
+        own_score, opponent_score = self._scores_for_player(player_idx)
+        score_gap = own_score - opponent_score
+        if profile == "Iron Anchor":
+            return 0.06, 0.03
+        if profile == "Iron Sleuth":
+            return -0.025, -0.01
+        if profile == "Iron Closer":
+            if score_gap >= 2 or own_score >= 8:
+                return -0.03, -0.01
+            if score_gap <= -2:
+                return 0.05, 0.02
+            return 0.01, 0.0
         return 0.0, 0.0
 
     def _simulate_cheems_bidding(self, player_idx, round_num, suits_to_check, is_stuck,
@@ -7464,6 +7581,34 @@ class EuchreGame(tk.Tk):
         # continuations. The most-visited action wins - identical to how bids are
         # selected during self-play generation.
         try:
+            if profile == "Iron Oracle":
+                passed_seats = self._gui_passed_seats()
+                bid_tensor = encode_bid_state(
+                    list(self.hands[player_idx]), player_idx, self.up_card,
+                    self.dealer_idx, round_num, passed_seats,
+                    self.team1_score, self.team2_score)
+                policy_probs, _ = self._eval_neural_brain(
+                    bid_tensor, neural_brain)
+                visit_dict, root_q = run_bid_mcts(
+                    list(self.hands[player_idx]), self.up_card, self.dealer_idx,
+                    player_idx, round_num, passed_seats,
+                    self.team1_score, self.team2_score,
+                    lambda tensor: self._eval_neural_brain(tensor, neural_brain),
+                    rollouts=max(rollouts * 3, 300),
+                    known_hands=(self._get_neural_known_hands(player_idx)
+                                 if known_hands is None else known_hands),
+                    call_margin=call_margin, loner_margin=loner_margin)
+                legal_actions = legal_bid_actions(
+                    round_num, self.up_card.suit, is_stuck)
+                best_action = choose_iron_oracle_bid(
+                    legal_actions, policy_probs, visit_dict)
+                confidence = visit_dict.get(best_action, 0.0) * 100.0
+                est_points = root_q * 4.0
+                if best_action == BID_PASS:
+                    return ("Pass", suits_to_check[0], False, confidence,
+                            est_points, is_stuck)
+                suit, is_loner = bid_action_details(best_action)
+                return ("Call", suit, is_loner, confidence, est_points, is_stuck)
             visit_dict, root_q = run_bid_mcts(
                 list(self.hands[player_idx]), self.up_card, self.dealer_idx,
                 player_idx, round_num, self._gui_passed_seats(),
@@ -9147,7 +9292,7 @@ class EuchreGame(tk.Tk):
         prof = self.ai_profiles.get(str(player_idx), "Human")
         if prof in HYBRID_MCTS_PROFILES:
             base_iterations = self.table_neural_play_iters
-            if prof == "Monte Prime":
+            if prof in {"Monte Prime", "Iron Oracle"}:
                 iterations = max(base_iterations * 3, 600)
             elif (prof == "Iron Solver"
                   and self.team1_tricks + self.team2_tricks >= 3):
