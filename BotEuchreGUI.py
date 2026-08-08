@@ -84,6 +84,10 @@ TOURNAMENT_LAB_SETTINGS_PATH = os.path.join(
 GOLDEN_REPLAY_PATH = os.path.join(RESOURCE_DIR, "golden_replay_cases.json")
 DATA_SCHEMA_VERSION = 2
 MIGRATION_BACKUP_DIRNAME = "backups"
+FILE_LOCK_TIMEOUT_SECONDS = float(
+    os.environ.get("BOT_EUCHRE_LOCK_TIMEOUT_SECONDS", "90"))
+FILE_LOCK_STALE_SECONDS = float(
+    os.environ.get("BOT_EUCHRE_LOCK_STALE_SECONDS", "180"))
 
 def prepare_node_state():
     os.makedirs(NODE_STATE_DIR, exist_ok=True)
@@ -102,8 +106,49 @@ def prepare_node_state():
         except OSError:
             pass
 
+def _pid_is_running(pid):
+    try:
+        pid = int(pid)
+    except (TypeError, ValueError):
+        return False
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError as error:
+        # WinError 87 is commonly raised when the PID does not exist.
+        return getattr(error, "winerror", None) not in {87}
+    return True
+
+
+def _lock_file_is_stale(lock_path, stale_after):
+    try:
+        age_seconds = time.time() - os.path.getmtime(lock_path)
+    except FileNotFoundError:
+        return False
+    if age_seconds > stale_after:
+        return True
+    try:
+        with open(lock_path, "r", encoding="utf-8") as lock_file:
+            payload = json.load(lock_file)
+    except (OSError, TypeError, ValueError):
+        # Give newly-written lock files a short grace period before recovery.
+        return age_seconds > 5.0
+    owner_node = str(payload.get("node", "")).strip()
+    owner_pid = payload.get("pid")
+    return owner_node == NODE_ID and not _pid_is_running(owner_pid)
+
+
 @contextmanager
-def cross_process_file_lock(filename, timeout=30.0, stale_after=3600.0):
+def cross_process_file_lock(filename, timeout=None, stale_after=None):
+    if timeout is None:
+        timeout = FILE_LOCK_TIMEOUT_SECONDS
+    if stale_after is None:
+        stale_after = FILE_LOCK_STALE_SECONDS
     lock_path = f"{filename}.lock"
     deadline = time.monotonic() + timeout
     os.makedirs(os.path.dirname(os.path.abspath(filename)), exist_ok=True)
@@ -118,7 +163,7 @@ def cross_process_file_lock(filename, timeout=30.0, stale_after=3600.0):
             break
         except (FileExistsError, PermissionError):
             try:
-                if time.time() - os.path.getmtime(lock_path) > stale_after:
+                if _lock_file_is_stale(lock_path, stale_after):
                     os.remove(lock_path)
                     continue
             except FileNotFoundError:
