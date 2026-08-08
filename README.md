@@ -190,7 +190,7 @@ and provenance summary.
 
 ## AI Profiles
 
-Bot Euchre currently offers 15 selectable profiles. Profiles can control table
+Bot Euchre currently offers 10 selectable profiles. Profiles can control table
 seats, provide advice through **Ask an AI**, or take over the human seat through
 **Autoplay**.
 
@@ -199,27 +199,21 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | Arbiter | Balanced Gen50 neural checkpoint with standard AlphaZero search. |
 | Ironclad | Frozen conservative neural specialist. |
 | Kyle | Aggressive neural specialist. |
-| Committee | Averages policy probabilities and value estimates from all three trained brains. |
 | The Closer | Routes to Ironclad while leading or near victory, Kyle while trailing, and Arbiter in balanced games. |
-| Counterpuncher | Uses Kyle while calling or supporting a contract, then Ironclad while defending. |
 | Unanimous Council | Reinforces moves independently preferred by all three brains and searches more deeply. |
 | Risk Manager | Uses Ironclad evaluations and favors the safer alternative when the top choices are close. |
-| Scoreboard General | Changes call and loner margins according to score and seat. |
 | Copycat | Learns from the human's passes, calls, loners, and card aggression, then adopts the nearest trained style. |
 | Wildcard | Randomly selects Arbiter, Ironclad, or Kyle at the start of each hand. |
 | The MC | Pure information-set MCTS without a neural checkpoint. |
-| Card Counter | Legal-information MCTS that searches more deeply as public card information accumulates. |
-| Saboteur | Evaluates with Ironclad and deliberately chooses its worst-ranked legal action. |
-| Noob | Uses random or simple deterministic choices with no meaningful search. |
+| Iron Monte | Hybrid profile that uses Ironclad for bidding/discard and deep pure MCTS for card play. |
 
 ## Playing and Coaching
 
 ### Ask an AI
 
 Use the **Ask an AI** menu while the human seat has an active bidding, discard, or
-play decision. Any profile can give advice. Neural advisers rank candidate actions;
-The MC and Card Counter use information-set search; Noob supplies a deliberately
-weak baseline.
+play decision. Any profile can give advice. Neural advisers rank candidate actions,
+while The MC and Iron Monte use information-set search during play.
 
 Each consultation is recorded in the session journal. A progress indicator appears
 while longer searches are running.
@@ -353,7 +347,7 @@ active play, bid, and discard search budgets, current bid margins, and Copycat's
 learned style scores when applicable.
 
 Category badges identify base neural brains, ensembles, routers, learners, MCTS
-profiles, novelty profiles, and baselines.
+profiles, and hybrid profiles.
 
 ### Tournament Mode
 
@@ -419,8 +413,9 @@ schedule, and selectable head-to-head records.
 
 **Headless Tournament Lab** launches as a separate process and compares the same
 neural AI profiles available in the main game rather than archived generations.
-The profile dropdown includes the base brains, ensembles, score/caller routers,
-Risk Manager, Scoreboard General, Copycat, Wildcard, and Saboteur.
+The profile dropdown includes the curated main-game roster: Arbiter, Ironclad,
+Kyle, The Closer, Unanimous Council, Risk Manager, Copycat, Wildcard, The MC,
+and Iron Monte.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.
@@ -622,5 +617,5 @@ py -3 .\rules_invariant_fuzzer.py --cases 5000 --seed 20260802
 Launch a reproducible mirrored checkpoint benchmark without the GUI:
 
 ```powershell
-py -3 .\adhoc_headless_evaluation.py Arbiter Committee --hands 100 --seed 20260801
+py -3 .\adhoc_headless_evaluation.py Arbiter "Unanimous Council" --hands 100 --seed 20260801
 ```
