@@ -46,6 +46,7 @@ LAB_SETTINGS_DEFAULTS = {
     "randomize_teams": False,
     "round_robin_hands": "200",
     "round_robin_label_prefix": "round_robin",
+    "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
     "shared_queue_enabled": False,
     "shared_queue_path": os.path.join(
         NODE_STATE_DIR, "bot_euchre_headless_jobs.sqlite3"),
@@ -400,10 +401,15 @@ def save_lab_settings(settings, filename=LAB_SETTINGS_PATH):
 class EvalGui(tk.Tk):
     def __init__(self):
         super().__init__()
+        self._configure_dark_theme()
         prepare_lab_state()
         self.title(f"Bot Euchre Tournament Lab - {NODE_ID}")
-        self.geometry("940x720")
-        self.minsize(860, 640)
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        default_w = min(940, max(760, screen_w - 80))
+        default_h = min(720, max(560, screen_h - 120))
+        self.geometry(f"{default_w}x{default_h}")
+        self.minsize(760, 560)
 
         self.output_queue = queue.Queue()
         self.process = None
@@ -415,7 +421,9 @@ class EvalGui(tk.Tk):
             f"{NODE_ID}@{socket.gethostname()}:{os.getpid()}:{uuid.uuid4().hex[:8]}")
         self.last_lease_heartbeat_at = 0.0
 
-        self.competitor_options = list(HEADLESS_TOURNAMENT_PROFILES)
+        self.all_profiles = list(HEADLESS_TOURNAMENT_PROFILES)
+        self.active_profiles = self._load_active_profiles()
+        self.competitor_options = list(self.active_profiles)
         self.round_robin_profiles = self._load_round_robin_profiles()
         self.model_a_var = tk.StringVar(value=self.default_model_a())
         self.model_b_var = tk.StringVar(value=self.default_model_b())
@@ -438,6 +446,8 @@ class EvalGui(tk.Tk):
             value=self.lab_settings.get("round_robin_label_prefix", "round_robin"))
         self.round_robin_profiles_var = tk.StringVar(
             value=self._round_robin_profiles_summary())
+        self.active_profiles_var = tk.StringVar(
+            value=self._active_profiles_summary())
         self.shared_queue_enabled_var = tk.BooleanVar(
             value=bool(self.lab_settings.get("shared_queue_enabled", False)))
         self.shared_queue_path_var = tk.StringVar(
@@ -476,11 +486,320 @@ class EvalGui(tk.Tk):
         self.after(100, self.drain_output_queue)
         self.after(1000, self.watchdog_tick)
 
+    def _configure_dark_theme(self):
+        self._colors = {
+            "bg": "#121619",
+            "panel": "#1A2126",
+            "surface": "#232B31",
+            "field": "#0F1418",
+            "fg": "#E6EEF4",
+            "muted": "#9AA8B4",
+            "accent": "#2E8DA8",
+            "accent_hover": "#3A9CB8",
+            "accent_pressed": "#246E84",
+            "border": "#32414C",
+            "select": "#21495C",
+            "select_fg": "#F3FAFF",
+        }
+        self.configure(bg=self._colors["bg"])
+
+        style = ttk.Style(self)
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+
+        style.configure(
+            ".",
+            background=self._colors["panel"],
+            foreground=self._colors["fg"],
+            fieldbackground=self._colors["field"],
+            bordercolor=self._colors["border"],
+            lightcolor=self._colors["border"],
+            darkcolor=self._colors["border"],
+        )
+        style.configure("TFrame", background=self._colors["panel"])
+        style.configure("TLabelframe", background=self._colors["panel"], bordercolor=self._colors["border"])
+        style.configure("TLabelframe.Label", background=self._colors["panel"], foreground=self._colors["fg"])
+        style.configure("TLabel", background=self._colors["panel"], foreground=self._colors["fg"])
+        style.configure(
+            "TButton",
+            background=self._colors["accent"],
+            foreground=self._colors["fg"],
+            bordercolor=self._colors["border"],
+            focusthickness=1,
+            focuscolor=self._colors["accent"],
+            padding=(8, 4),
+        )
+        style.map(
+            "TButton",
+            background=[
+                ("pressed", self._colors["accent_pressed"]),
+                ("active", self._colors["accent_hover"]),
+                ("disabled", self._colors["surface"]),
+            ],
+            foreground=[("disabled", self._colors["muted"])],
+        )
+        style.configure(
+            "TEntry",
+            fieldbackground=self._colors["field"],
+            foreground=self._colors["fg"],
+            insertcolor=self._colors["fg"],
+            bordercolor=self._colors["border"],
+        )
+        style.configure(
+            "TCombobox",
+            fieldbackground=self._colors["field"],
+            background=self._colors["surface"],
+            foreground=self._colors["fg"],
+            arrowcolor=self._colors["fg"],
+            bordercolor=self._colors["border"],
+        )
+        style.map(
+            "TCombobox",
+            fieldbackground=[("readonly", self._colors["field"]), ("disabled", self._colors["surface"])],
+            foreground=[("readonly", self._colors["fg"]), ("disabled", self._colors["muted"])],
+        )
+        style.configure(
+            "TCheckbutton",
+            background=self._colors["panel"],
+            foreground=self._colors["fg"],
+        )
+        style.map(
+            "TCheckbutton",
+            foreground=[("disabled", self._colors["muted"])],
+            background=[("active", self._colors["panel"])],
+        )
+        style.configure(
+            "Treeview",
+            background=self._colors["field"],
+            fieldbackground=self._colors["field"],
+            foreground=self._colors["fg"],
+            bordercolor=self._colors["border"],
+            rowheight=24,
+        )
+        style.map(
+            "Treeview",
+            background=[("selected", self._colors["select"])],
+            foreground=[("selected", self._colors["select_fg"])],
+        )
+        style.configure(
+            "Treeview.Heading",
+            background=self._colors["surface"],
+            foreground=self._colors["fg"],
+            bordercolor=self._colors["border"],
+        )
+        style.map(
+            "Treeview.Heading",
+            background=[("active", self._colors["surface"])],
+            foreground=[("active", self._colors["fg"])],
+        )
+        style.configure(
+            "Vertical.TScrollbar",
+            background=self._colors["surface"],
+            troughcolor=self._colors["panel"],
+            bordercolor=self._colors["border"],
+            arrowcolor=self._colors["fg"],
+        )
+
+        self.option_add("*TCombobox*Listbox*Background", self._colors["field"])
+        self.option_add("*TCombobox*Listbox*Foreground", self._colors["fg"])
+        self.option_add("*TCombobox*Listbox*selectBackground", self._colors["select"])
+        self.option_add("*TCombobox*Listbox*selectForeground", self._colors["select_fg"])
+
+    def _sync_main_scroll_region(self, _event=None):
+        if hasattr(self, "main_canvas"):
+            self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _fit_main_content_width(self, event):
+        if hasattr(self, "main_canvas") and hasattr(self, "main_canvas_window"):
+            self.main_canvas.itemconfigure(self.main_canvas_window, width=event.width)
+
+    def _main_can_scroll_vertically(self):
+        if not hasattr(self, "main_canvas"):
+            return False
+        top, bottom = self.main_canvas.yview()
+        return not (top <= 0.0 and bottom >= 1.0)
+
+    def _on_main_mousewheel(self, event):
+        if not self._main_can_scroll_vertically():
+            return
+        delta = 0
+        if getattr(event, "num", None) == 4:
+            delta = -1
+        elif getattr(event, "num", None) == 5:
+            delta = 1
+        else:
+            raw = getattr(event, "delta", 0)
+            if raw == 0:
+                return
+            if sys.platform == "darwin":
+                delta = -1 if raw > 0 else 1
+            else:
+                delta = -int(raw / 120) if raw % 120 == 0 else (-1 if raw > 0 else 1)
+        if delta != 0:
+            self.main_canvas.yview_scroll(delta, "units")
+
+    def _bind_main_mousewheel(self, _event=None):
+        self.bind_all("<MouseWheel>", self._on_main_mousewheel)
+        self.bind_all("<Button-4>", self._on_main_mousewheel)
+        self.bind_all("<Button-5>", self._on_main_mousewheel)
+
+    def _unbind_main_mousewheel(self, _event=None):
+        self.unbind_all("<MouseWheel>")
+        self.unbind_all("<Button-4>")
+        self.unbind_all("<Button-5>")
+
     def default_model_a(self):
         return "Arbiter"
 
     def default_model_b(self):
         return "Ironclad"
+
+    def _load_active_profiles(self):
+        saved = self.lab_settings.get("active_profiles")
+        if not isinstance(saved, list):
+            return list(self.all_profiles)
+        selected = [profile for profile in saved if profile in self.all_profiles]
+        if len(selected) < 2:
+            return list(self.all_profiles)
+        return selected
+
+    def _recommended_core_profiles(self):
+        preferred = [
+            "Ironclad", "Risk Manager", "Unanimous Council", "The Closer",
+            "The MC", "Card Counter", "Arbiter", "Committee",
+            "Scoreboard General", "Iron Monte",
+        ]
+        selected = [profile for profile in preferred if profile in self.all_profiles]
+        if len(selected) >= 2:
+            return selected
+        return list(self.all_profiles)
+
+    def _active_profiles_summary(self):
+        selected_count = len(self.active_profiles)
+        total_count = len(self.all_profiles)
+        excluded = [
+            p for p in self.all_profiles if p not in self.active_profiles]
+        if excluded:
+            excluded_text = ", ".join(excluded[:3])
+            if len(excluded) > 3:
+                excluded_text += ", ..."
+            return (f"{selected_count}/{total_count} active "
+                    f"(excluding {excluded_text})")
+        return f"{selected_count}/{total_count} active"
+
+    def _apply_active_profiles(self, chosen):
+        self.active_profiles = list(chosen)
+        self.competitor_options = list(chosen)
+        self.model_a_combo["values"] = self.competitor_options
+        self.model_b_combo["values"] = self.competitor_options
+        if self.model_a_var.get() not in self.competitor_options:
+            self.model_a_var.set(self.competitor_options[0])
+        if self.model_b_var.get() not in self.competitor_options:
+            fallback = self.competitor_options[1] if len(self.competitor_options) > 1 else self.competitor_options[0]
+            self.model_b_var.set(fallback)
+
+        self.round_robin_profiles = [
+            profile for profile in self.round_robin_profiles
+            if profile in self.competitor_options]
+        if len(self.round_robin_profiles) < 2:
+            self.round_robin_profiles = self._default_round_robin_profiles()
+
+        self.active_profiles_var.set(self._active_profiles_summary())
+        self.round_robin_profiles_var.set(self._round_robin_profiles_summary())
+        self.save_runtime_preferences()
+
+    def _open_active_profile_picker(self):
+        dialog = tk.Toplevel(self)
+        dialog.title("Active Tournament Profiles")
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.geometry("480x560")
+        dialog.minsize(440, 460)
+
+        frame = ttk.Frame(dialog, padding=12)
+        frame.pack(fill=tk.BOTH, expand=True)
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(1, weight=1)
+
+        ttk.Label(
+            frame,
+            text="Choose active profiles for team dropdowns and round robin:").grid(
+                row=0, column=0, sticky="w")
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
+        canvas = tk.Canvas(
+            list_frame,
+            highlightthickness=0,
+            bg=self._colors["field"],
+        )
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
+        checks_frame = ttk.Frame(canvas)
+        checks_frame.bind(
+            "<Configure>",
+            lambda _e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=checks_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        selected = set(self.active_profiles)
+        vars_by_profile = {}
+        for profile in self.all_profiles:
+            var = tk.BooleanVar(value=profile in selected)
+            vars_by_profile[profile] = var
+            ttk.Checkbutton(
+                checks_frame, text=profile, variable=var).pack(anchor="w", pady=2)
+
+        def choose_all():
+            for var in vars_by_profile.values():
+                var.set(True)
+
+        def choose_none():
+            for var in vars_by_profile.values():
+                var.set(False)
+
+        def choose_recommended():
+            recommended = set(self._recommended_core_profiles())
+            for profile, var in vars_by_profile.items():
+                var.set(profile in recommended)
+
+        def apply_selection():
+            chosen = [
+                profile for profile in self.all_profiles
+                if vars_by_profile[profile].get()]
+            if len(chosen) < 2:
+                messagebox.showerror(
+                    "Active Profiles",
+                    "Select at least two active profiles.")
+                return
+            self._apply_active_profiles(chosen)
+            dialog.destroy()
+
+        presets_bar = ttk.Frame(frame)
+        presets_bar.grid(row=2, column=0, sticky="ew", pady=(0, 8))
+        ttk.Button(
+            presets_bar, text="Recommended Core",
+            command=choose_recommended).pack(side=tk.LEFT)
+        ttk.Button(presets_bar, text="All", command=choose_all).pack(
+            side=tk.LEFT, padx=(8, 0))
+        ttk.Button(presets_bar, text="None", command=choose_none).pack(
+            side=tk.LEFT, padx=(8, 0))
+
+        action_bar = ttk.Frame(frame)
+        action_bar.grid(row=3, column=0, sticky="ew")
+        ttk.Label(
+            action_bar, text="Tip: Enter applies, Esc cancels.").pack(
+                side=tk.LEFT)
+        ttk.Button(action_bar, text="Cancel", command=dialog.destroy).pack(
+            side=tk.RIGHT)
+        ttk.Button(action_bar, text="OK / Apply", command=apply_selection).pack(
+            side=tk.RIGHT, padx=(0, 8))
+
+        dialog.bind("<Return>", lambda _e: apply_selection())
+        dialog.bind("<Escape>", lambda _e: dialog.destroy())
 
     def _default_round_robin_profiles(self):
         default_profiles = [
@@ -541,7 +860,11 @@ class EvalGui(tk.Tk):
 
         list_frame = ttk.Frame(frame)
         list_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 8))
-        canvas = tk.Canvas(list_frame, highlightthickness=0)
+        canvas = tk.Canvas(
+            list_frame,
+            highlightthickness=0,
+            bg=self._colors["field"],
+        )
         scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=canvas.yview)
         checks_frame = ttk.Frame(canvas)
         checks_frame.bind(
@@ -620,8 +943,27 @@ class EvalGui(tk.Tk):
         dialog.bind("<Escape>", lambda _e: dialog.destroy())
 
     def create_widgets(self):
-        outer = ttk.Frame(self, padding=14)
-        outer.pack(fill=tk.BOTH, expand=True)
+        root_container = ttk.Frame(self)
+        root_container.pack(fill=tk.BOTH, expand=True)
+
+        self.main_canvas = tk.Canvas(
+            root_container,
+            highlightthickness=0,
+            bg=self._colors["bg"],
+        )
+        main_scrollbar = ttk.Scrollbar(
+            root_container, orient="vertical", command=self.main_canvas.yview)
+        self.main_canvas.configure(yscrollcommand=main_scrollbar.set)
+        self.main_canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        main_scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+        outer = ttk.Frame(self.main_canvas, padding=14)
+        self.main_canvas_window = self.main_canvas.create_window(
+            (0, 0), window=outer, anchor="nw")
+        outer.bind("<Configure>", self._sync_main_scroll_region)
+        self.main_canvas.bind("<Configure>", self._fit_main_content_width)
+        self.main_canvas.bind("<Enter>", self._bind_main_mousewheel)
+        self.main_canvas.bind("<Leave>", self._unbind_main_mousewheel)
 
         controls = ttk.LabelFrame(outer, text="Tournament Setup", padding=12)
         controls.pack(fill=tk.X)
@@ -642,6 +984,14 @@ class EvalGui(tk.Tk):
             controls, text="Randomize teams for each started or queued tournament",
             variable=self.randomize_teams_var).grid(
                 row=2, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        ttk.Label(controls, text="Active profiles").grid(
+            row=5, column=0, sticky="w", padx=(0, 8), pady=4)
+        ttk.Label(controls, textvariable=self.active_profiles_var).grid(
+            row=5, column=1, columnspan=2, sticky="w", pady=4)
+        ttk.Button(
+            controls, text="Configure Active Profiles",
+            command=self._open_active_profile_picker).grid(
+                row=5, column=3, sticky="e", pady=4)
 
         ttk.Label(controls, text="Play MCTS iterations").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
         ttk.Entry(controls, textvariable=self.mcts_a_var, width=12).grid(row=3, column=1, sticky="w", pady=4)
@@ -770,7 +1120,18 @@ class EvalGui(tk.Tk):
         output_frame.rowconfigure(0, weight=1)
         output_frame.columnconfigure(0, weight=1)
 
-        self.output_text = tk.Text(output_frame, wrap=tk.WORD, height=18)
+        self.output_text = tk.Text(
+            output_frame,
+            wrap=tk.WORD,
+            height=18,
+            bg=self._colors["field"],
+            fg=self._colors["fg"],
+            insertbackground=self._colors["fg"],
+            selectbackground=self._colors["select"],
+            selectforeground=self._colors["select_fg"],
+            highlightbackground=self._colors["border"],
+            highlightcolor=self._colors["border"],
+        )
         self.output_text.grid(row=0, column=0, sticky="nsew")
         scrollbar = ttk.Scrollbar(output_frame, command=self.output_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
@@ -854,6 +1215,22 @@ class EvalGui(tk.Tk):
             if should_fallback_path(current):
                 cmd[idx + 1] = default_path
 
+        # Shared queue jobs should run with this node's local CPU budget.
+        try:
+            local_worker_multiplier = int(str(self.worker_multiplier_var.get()).strip())
+        except (TypeError, ValueError):
+            local_worker_multiplier = None
+        if local_worker_multiplier is not None and local_worker_multiplier >= 1:
+            try:
+                worker_idx = cmd.index("--worker-multiplier")
+            except ValueError:
+                cmd.extend(["--worker-multiplier", str(local_worker_multiplier)])
+            else:
+                if worker_idx + 1 < len(cmd):
+                    cmd[worker_idx + 1] = str(local_worker_multiplier)
+                else:
+                    cmd.append(str(local_worker_multiplier))
+
         return cmd
 
     def _load_jobs_from_backend(self):
@@ -921,7 +1298,18 @@ class EvalGui(tk.Tk):
         dialog = tk.Toplevel(self)
         dialog.title("Tournament Lab Help")
         dialog.geometry("680x520")
-        text = tk.Text(dialog, wrap=tk.WORD, padx=14, pady=14)
+        dialog.configure(bg=self._colors["panel"])
+        text = tk.Text(
+            dialog,
+            wrap=tk.WORD,
+            padx=14,
+            pady=14,
+            bg=self._colors["field"],
+            fg=self._colors["fg"],
+            insertbackground=self._colors["fg"],
+            selectbackground=self._colors["select"],
+            selectforeground=self._colors["select_fg"],
+        )
         text.insert("1.0", "Headless Tournament Lab\n\n" + content)
         text.config(state=tk.DISABLED)
         scrollbar = ttk.Scrollbar(dialog, command=text.yview)
@@ -936,6 +1324,7 @@ class EvalGui(tk.Tk):
             "max_runtime_minutes": self.max_runtime_var.get().strip(),
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
+            "active_profiles": list(self.active_profiles),
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
             "round_robin_profiles": list(self.round_robin_profiles),

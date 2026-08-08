@@ -32,7 +32,8 @@ torch.set_num_threads(1)
 from BotEuchreGUI import (
     SimState, Card, CheemsNeuralNet, encode_state_to_tensor,
     ALL_DECK_KEYS, SUITS_T, RANKS_T, SAME_COLOR_T, HAS_TORCH,
-    POLICY_SIZE, BID_PASS, run_auction, legal_bid_actions,
+    POLICY_SIZE, BID_PASS, BID_CALL_BASE, BID_ALONE_BASE,
+    run_auction, legal_bid_actions,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts
 )
@@ -336,6 +337,8 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
     if profile_name == "Hoyle":
         return "Arbiter"
+    if profile_name == "Iron Monte":
+        return "Ironclad"
     if profile_name in {"Arbiter", "Ironclad", "Kyle", "Committee",
                         "Unanimous Council"}:
         return profile_name
@@ -615,6 +618,10 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         if active_profile == "Hoyle":
             chosen_move = sim.get_heuristic_move()
         else:
+            if active_profile == "Iron Monte":
+                # Iron Monte contract phase is Ironclad, but play phase is
+                # intentionally a deeper MCTS search regime.
+                active_iterations = max(active_iterations * 2, 400)
             if active_profile == "Unanimous Council":
                 active_iterations *= 2
             active_brain = brain_for_seat(sim.current_turn, caller_idx)

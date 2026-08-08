@@ -79,6 +79,8 @@ HUMAN_LEAGUE_PATH = os.path.join(
     NODE_STATE_DIR, "bot_euchre_human_league.json")
 HUMAN_LEAGUE_HISTORY_PATH = os.path.join(
     NODE_STATE_DIR, "bot_euchre_human_league_history.jsonl")
+TOURNAMENT_LAB_SETTINGS_PATH = os.path.join(
+    NODE_STATE_DIR, "bot_euchre_tournament_lab_settings.json")
 GOLDEN_REPLAY_PATH = os.path.join(RESOURCE_DIR, "golden_replay_cases.json")
 DATA_SCHEMA_VERSION = 2
 MIGRATION_BACKUP_DIRNAME = "backups"
@@ -636,8 +638,15 @@ def _migrate_jsonl_schema_unlocked(filename, schema_name):
         for line in source:
             if not line.strip():
                 continue
-            record = json.loads(line)
+            try:
+                record = json.loads(line)
+            except (TypeError, ValueError):
+                # Keep evaluation tools resilient if a JSONL file contains an
+                # accidental non-JSON line from prior manual edits/tooling.
+                changed = True
+                continue
             if not isinstance(record, dict):
+                changed = True
                 continue
             if (record.get("_schema") != schema_name
                     or record.get("_schema_version") != DATA_SCHEMA_VERSION):
@@ -758,6 +767,7 @@ def profile_checkpoint_paths(profile_name):
         "The Closer": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Counterpuncher": [IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Risk Manager": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
         "Saboteur": [IRONCLAD_WEIGHTS_PATH],
         "Scoreboard General": [ARBITER_WEIGHTS_PATH],
         "Copycat": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
@@ -1302,32 +1312,111 @@ AI_PROFILE_CHOICES = {
     "Arbiter (Vanilla Neural)": "The balanced Gen50 neural checkpoint with standard AlphaZero search.",
     "Ironclad (Conservative Neural)": "The frozen conservative checkpoint, favoring disciplined calls and lower euchre risk.",
     "Kyle (Aggressive Neural)": "The aggressive checkpoint, willing to call thinner hands and press scoring chances.",
-    "Committee (Three-Brain Ensemble)": "Averages Vanilla, Ironclad, and Kyle policy probabilities and value estimates on every evaluation.",
     "The Closer (Score-Aware Router)": "Uses Ironclad while leading or near victory, Kyle when trailing, and Vanilla in balanced games.",
-    "Counterpuncher (Caller-Aware Router)": "Uses Kyle while bidding or supporting its team's call, then Ironclad when defending an opponent's contract.",
     "Unanimous Council (Deep Consensus)": "Reinforces moves all three neural brains independently favor and doubles ensemble search depth.",
     "Risk Manager (Close-Choice Conservative)": "Uses Ironclad evaluations and takes the safer alternative when the top two search choices are nearly tied.",
-    "Scoreboard General (Dynamic Bid Margins)": "Adjusts call and loner aggression from the score and seat while retaining Vanilla's balanced play.",
     "Copycat (Human Style Learner)": "Tracks the human's passes, calls, loners, and card aggression, then adopts the closest existing neural personality.",
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
-    "Card Counter (Adaptive MCTS)": "Uses legal-information MCTS and searches deeper as more cards become publicly known.",
-    "Hoyle (Strict Conventional)": "Uses strict convention-first heuristics for bidding, discard, and play with no neural evaluation.",
-    "Saboteur (Worst-Ranked Ironclad)": "Evaluates with Ironclad, then deliberately chooses its worst-ranked legal action.",
-    "Noob (0 Iteration Bot)": "Uses simple deterministic and random fallbacks without meaningful tree search.",
+    "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep pure MCTS for trick play.",
+}
+LEGACY_PROFILE_FALLBACKS = {
+    "Noob": "Arbiter",
+    "Saboteur": "Ironclad",
+    "Hoyle": "Risk Manager",
+    "Counterpuncher": "The Closer",
+    "Scoreboard General": "Risk Manager",
+    "Committee": "Unanimous Council",
+    "Card Counter": "The MC",
 }
 NEURAL_PROFILES = {
-    "Arbiter", "Ironclad", "Kyle", "Committee", "The Closer",
-    "Counterpuncher", "Unanimous Council", "Risk Manager",
-    "Scoreboard General", "Copycat", "Wildcard", "Saboteur",
+    "Arbiter", "Ironclad", "Kyle", "The Closer",
+    "Unanimous Council", "Risk Manager",
+    "Copycat", "Wildcard",
+    "Iron Monte",
 }
 HEADLESS_MCTS_PROFILES = {
-    "The MC", "Card Counter", "Hoyle",
+    "The MC",
 }
-TOURNAMENT_PROFILES = tuple(label.split(" (")[0] for label in AI_PROFILE_CHOICES)
+TOURNAMENT_PROFILES = tuple(
+    label.split(" (")[0] for label in AI_PROFILE_CHOICES
+)
 HEADLESS_TOURNAMENT_PROFILES = tuple(
     profile for profile in TOURNAMENT_PROFILES
     if profile in NEURAL_PROFILES or profile in HEADLESS_MCTS_PROFILES)
+
+
+def normalize_profile_name(profile_name, default="Arbiter", allow_human=False):
+    name = str(profile_name or "").strip()
+    if allow_human and name == "Human":
+        return "Human"
+    name = LEGACY_PROFILE_FALLBACKS.get(name, name)
+    if name in TOURNAMENT_PROFILES:
+        return name
+    return default
+
+
+def profile_label_from_name(profile_name):
+    normalized = normalize_profile_name(profile_name)
+    for label in AI_PROFILE_CHOICES:
+        if label.split(" (")[0] == normalized:
+            return label
+    return next(iter(AI_PROFILE_CHOICES))
+
+
+def sanitize_profile_preferences(settings):
+    sanitized = dict(settings)
+    players = sanitized.get("players", [])
+    if not isinstance(players, list):
+        players = []
+    clean_players = []
+    for index in range(3):
+        raw = players[index] if index < len(players) else None
+        clean_name = normalize_profile_name(
+            str(raw).split(" (")[0] if isinstance(raw, str) else None)
+        clean_players.append(profile_label_from_name(clean_name))
+    sanitized["players"] = clean_players
+
+    favorites = sanitized.get("favorites", [])
+    if not isinstance(favorites, list):
+        favorites = []
+    clean_favorites = []
+    for favorite in favorites:
+        normalized = normalize_profile_name(favorite)
+        if normalized not in clean_favorites:
+            clean_favorites.append(normalized)
+    if not clean_favorites:
+        clean_favorites = ["Arbiter", "Ironclad", "Kyle", "Unanimous Council"]
+    sanitized["favorites"] = clean_favorites[:8]
+    return sanitized
+
+
+def load_active_tournament_profiles(default_profiles=None):
+    profiles = list(default_profiles or TOURNAMENT_PROFILES)
+    try:
+        settings = load_versioned_mapping(
+            TOURNAMENT_LAB_SETTINGS_PATH,
+            "bot-euchre-tournament-lab-settings",
+            {"active_profiles": profiles},
+        )
+    except (OSError, TypeError, ValueError):
+        return profiles
+    active_profiles = settings.get("active_profiles")
+    if not isinstance(active_profiles, list):
+        return profiles
+    filtered = [
+        profile for profile in active_profiles if profile in TOURNAMENT_PROFILES]
+    if len(filtered) < 2:
+        return profiles
+    return filtered
+
+
+def active_profile_choice_labels(default_profiles=None):
+    active = set(load_active_tournament_profiles(default_profiles))
+    labels = [
+        label for label in AI_PROFILE_CHOICES
+        if label.split(" (")[0] in active]
+    return labels or list(AI_PROFILE_CHOICES)
 
 def random_tournament_matchup(
         current=None, profiles=TOURNAMENT_PROFILES, chooser=random.choice):
@@ -1349,18 +1438,15 @@ def resolve_tournament_seed(
     except (TypeError, ValueError) as error:
         raise ValueError("Tournament seed must be a whole number.") from error
 
-HEURISTIC_PROFILES = {"The MC", "Hoyle"}
+HEURISTIC_PROFILES = {"The MC"}
 WILDCARD_PROFILES = ("Arbiter", "Ironclad", "Kyle")
 PROFILE_CATEGORIES = {
     "Arbiter": "Base Neural", "Ironclad": "Base Neural",
-    "Kyle": "Base Neural", "Committee": "Ensemble",
+    "Kyle": "Base Neural",
     "Unanimous Council": "Ensemble", "The Closer": "Router",
-    "Counterpuncher": "Router", "Risk Manager": "Router",
-    "Scoreboard General": "Router", "Copycat": "Learner",
+    "Risk Manager": "Router", "Copycat": "Learner",
+    "Iron Monte": "Hybrid",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
-    "Card Counter": "Adaptive MCTS", "Hoyle": "Conventional",
-    "Saboteur": "Novelty",
-    "Noob": "Baseline",
 }
 HELP_TOPICS = [
     ("Quick Start", (
@@ -1431,20 +1517,16 @@ HELP_TOPICS = [
     ("AI Profiles", (
         "Base brains: Arbiter is balanced, Ironclad is conservative about "
         "risk, and Kyle presses thinner opportunities.\n\n"
-        "Ensembles: Committee averages all three base brains. Unanimous Council "
-        "adds weight when all three independently agree and uses deeper search.\n\n"
+        "Ensembles: Unanimous Council adds weight when all three base brains "
+        "independently agree and uses deeper search.\n\n"
         "Routers: The Closer favors Ironclad while ahead or near victory and Kyle "
-        "while behind. Counterpuncher uses Kyle while calling or supporting, then "
-        "Ironclad on defense. Risk Manager chooses the safer alternative when "
-        "Ironclad's top choices are close. Scoreboard General changes bidding "
-        "aggression according to score and seat.\n\n"
+        "while behind. Risk Manager chooses the safer alternative when Ironclad's "
+        "top choices are close.\n\n"
         "Adaptive personalities: Copycat watches your calls and play tendencies, "
         "then imitates the closest base style. Wildcard chooses one base brain "
         "at random for each hand.\n\n"
-        "Search and test profiles: The MC uses information-set MCTS without a "
-        "neural network. Card Counter searches deeper as public information grows. "
-        "Noob uses simple or random choices. Saboteur intentionally chooses the "
-        "worst option in Ironclad's ranking.\n\n"
+        "Search profiles: The MC uses information-set MCTS without a neural "
+        "network.\n\n"
         "Profile Inspector shows descriptions, categories, search budgets, style "
         "scores, checkpoint paths, and fingerprints.")),
     ("Ask an AI & Compare", (
@@ -1568,8 +1650,7 @@ HELP_TOPICS = [
     ("Headless Tournament Lab", (
         "The Headless Tournament Lab is a separate window for running many mirrored "
         "hands without drawing the table. Both competitor menus use the main game's "
-        "fair-play neural profile roster plus supported MCTS profiles (The MC and "
-        "Card Counter).\n\n"
+        "fair-play neural profile roster plus supported MCTS profiles (The MC).\n\n"
         "Total games is twice the number of paired deals. For each deal, the profiles "
         "play the same cards twice with team ownership swapped. This removes much of "
         "the luck of a favorable deal. Play iterations and bid rollouts control search "
@@ -1654,7 +1735,7 @@ HELP_TOPICS = [
     ("Model & Search Health", (
         "Model Health refreshes automatically and shows the compute device, PyTorch "
         "availability, active searches, worker generation, and whether Arbiter, "
-        "Ironclad, Kyle, Committee, and Council loaded successfully. On CUDA it also "
+        "Ironclad, Kyle, and Council loaded successfully. On CUDA it also "
         "shows allocated and reserved GPU memory.\n\n"
         "Search Performance summarizes searches recorded during this session. Median "
         "is a typical time, P95 is slower than 95% of samples, and Max is the slowest. "
@@ -2416,7 +2497,7 @@ class SettingsStore:
         "engine_speed": "Grandmaster (100,000 Iterations)",
         "drill": "Standard Match",
         "players": ["Arbiter (Vanilla Neural)"] * 3,
-        "favorites": ["Arbiter", "Ironclad", "Kyle", "Committee"],
+        "favorites": ["Arbiter", "Ironclad", "Kyle", "Unanimous Council"],
         "large_cards": False, "high_contrast": False,
         "reduced_motion": False, "presets": {},
         "elo_season_id": "legacy", "elo_season_name": "Legacy",
@@ -2425,8 +2506,9 @@ class SettingsStore:
     def __init__(self, filename=SETTINGS_PATH):
         self.filename = filename
         try:
-            self.data = load_versioned_mapping(
+            loaded = load_versioned_mapping(
                 filename, "bot-euchre-settings", self.DEFAULTS)
+            self.data = sanitize_profile_preferences(loaded)
         except (OSError, ValueError, TypeError):
             self.data = copy.deepcopy(self.DEFAULTS)
             self.data.update({
@@ -3130,33 +3212,24 @@ class ISMCTS_Multiprocessing_Agent:
     def get_best_move(self, ui_game, player_idx, return_confidence=False, override_iters=None, return_all_moves=False, prepacked_state=None):
         profile = ui_game.ai_profiles.get(str(player_idx), "Human")
 
-        if profile == "Hoyle":
-            if return_all_moves:
-                return ui_game.get_hoyle_ranked_moves(player_idx)
-            best_move, conf = ui_game.get_hoyle_best_move(player_idx)
-            return (best_move, conf) if return_confidence else best_move
+        if profile == "Iron Monte":
+            # Hybrid profile: contract phase uses Ironclad routing, but card play
+            # is intentionally deep pure MCTS.
+            profile = "The MC"
         
         if profile in NEURAL_PROFILES:
             if return_all_moves:
                 return ui_game.get_cheems_ranked_moves(player_idx)
             best_move, conf = ui_game.get_cheems_best_move(player_idx)
             return (best_move, conf) if return_confidence else best_move
-            
-        if profile == "Noob" and not return_all_moves and not override_iters:
-            legal_indices = ui_game.get_legal_moves(ui_game.hands[player_idx])
-            fallback = random.choice(legal_indices)
-            return (fallback, 0.0) if return_confidence else fallback
 
         iters_to_run = self.human_total_iters
         if override_iters: 
             iters_to_run = override_iters
+        elif ui_game.ai_profiles.get(str(player_idx), "Human") == "Iron Monte":
+            iters_to_run = max(CHEEMS_UI_PLAY_ITERS * 2, self.human_total_iters)
         elif profile in HEURISTIC_PROFILES:
             iters_to_run = CHEEMS_UI_PLAY_ITERS
-        elif profile == "Card Counter":
-            revealed_cards = len(ui_game.played_cards) + len(ui_game.trick)
-            iters_to_run = CHEEMS_UI_PLAY_ITERS + 150 * revealed_cards
-        elif profile == "Noob":
-            iters_to_run = 100
         
         if iters_to_run < 100: iters_to_run = 100
         iters_per_core = math.ceil(iters_to_run / self.cores)
@@ -3335,9 +3408,17 @@ class EuchreGame(tk.Tk):
     def _start_restored_session(self, payload):
         self._configure_runtime_from_settings()
         state = payload["state"]
-        self.ai_profiles = {
+        restored_profiles = {
             str(key): value for key, value in state.get(
                 "ai_profiles", self.ai_profiles).items()}
+        for seat in (0, 1, 2, 3):
+            seat_key = str(seat)
+            restored_value = restored_profiles.get(seat_key)
+            self.ai_profiles[seat_key] = normalize_profile_name(
+                restored_value,
+                default="Arbiter",
+                allow_human=(seat == 0),
+            )
         for seat in (1, 2, 3):
             PLAYER_NAMES[seat] = self.ai_profiles.get(str(seat), "Arbiter")
         self.active_drill = state.get("active_drill", "Standard Match")
@@ -3603,7 +3684,6 @@ class EuchreGame(tk.Tk):
                 ("Arbiter", self.cheems_brain),
                 ("Ironclad", self.ironclad_brain),
                 ("Kyle", self.kyle_brain),
-                ("Committee", self.committee_brain),
                 ("Council", self.unanimous_council_brain),
             ]
             lines = [
@@ -3739,13 +3819,11 @@ class EuchreGame(tk.Tk):
             return self.ironclad_brain
         if profile == "Kyle":
             return self.kyle_brain
-        if profile == "Saboteur":
-            return self.ironclad_brain
-        if profile == "Committee":
-            return self.committee_brain
         if profile == "Unanimous Council":
             return self.unanimous_council_brain
         if profile == "Risk Manager":
+            return self.ironclad_brain
+        if profile == "Iron Monte":
             return self.ironclad_brain
         if profile == "The Closer":
             own_score, opponent_score = self._scores_for_player(player_idx)
@@ -3753,10 +3831,6 @@ class EuchreGame(tk.Tk):
                 return self.ironclad_brain
             if opponent_score - own_score >= 2:
                 return self.kyle_brain
-        if profile == "Counterpuncher":
-            if self.caller_idx < 0 or self.caller_idx % 2 == player_idx % 2:
-                return self.kyle_brain
-            return self.ironclad_brain
         if profile == "Copycat":
             copied_profile = max(
                 self.copycat_style_scores, key=self.copycat_style_scores.get)
@@ -4052,9 +4126,7 @@ class EuchreGame(tk.Tk):
             state_pack=state_pack)
         if ranked_moves:
             profile = self.ai_profiles.get(str(player_idx))
-            if profile == "Saboteur":
-                chosen = ranked_moves[-1]
-            elif (profile == "Risk Manager" and len(ranked_moves) > 1
+            if (profile == "Risk Manager" and len(ranked_moves) > 1
                   and ranked_moves[0][1] - ranked_moves[1][1] <= 5.0):
                 chosen = ranked_moves[1]
             else:
@@ -4149,9 +4221,10 @@ class EuchreGame(tk.Tk):
         
         tk.Label(dialog, text="Bot Euchre", font=("Arial", 20, "bold"), bg=setup_bg, fg=setup_gold).pack(pady=10)
 
-        ai_choices = list(AI_PROFILE_CHOICES)
+        ai_choices = active_profile_choice_labels()
+        default_label = ai_choices[0]
         profile_description_var = tk.StringVar(
-            value=AI_PROFILE_CHOICES["Arbiter (Vanilla Neural)"])
+            value=AI_PROFILE_CHOICES[default_label])
         tk.Label(
             dialog, textvariable=profile_description_var,
             font=("Arial", 9, "italic"), bg=setup_bg, fg=setup_muted,
@@ -4168,7 +4241,7 @@ class EuchreGame(tk.Tk):
         defaults = {
             seat: (saved_players[seat - 1] if len(saved_players) >= seat
                    and saved_players[seat - 1] in ai_choices
-                   else "Arbiter (Vanilla Neural)")
+                   else default_label)
             for seat in (1, 2, 3)
         }
         labels = {1: "Left Opponent:", 2: "Your Partner:", 3: "Right Opponent:"}
@@ -5290,8 +5363,8 @@ class EuchreGame(tk.Tk):
             "profile_inspector", "AI Profile Inspector", "620x500")
         if not created:
             return
-        profile_var = tk.StringVar(value="Arbiter")
-        profiles = [label.split(" (")[0] for label in AI_PROFILE_CHOICES]
+        profiles = load_active_tournament_profiles()
+        profile_var = tk.StringVar(value=profiles[0])
         menu = tk.OptionMenu(dialog, profile_var, *profiles)
         menu.config(font=("Arial", 11), width=30)
         menu.pack(pady=12)
@@ -5304,9 +5377,8 @@ class EuchreGame(tk.Tk):
             profile = profile_var.get()
             label = self._profile_display_label(profile)
             description = AI_PROFILE_CHOICES.get(label, "")
-            route = "Pure MCTS" if profile in {"The MC", "Card Counter"} else (
-                "Conventional heuristics" if profile == "Hoyle" else
-                "Zero-search fallback" if profile == "Noob" else
+            route = "Pure MCTS" if profile == "The MC" else (
+                "Hybrid: Ironclad contract + deep MCTS play" if profile == "Iron Monte" else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
                 f"{profile} checkpoint")
@@ -5345,7 +5417,7 @@ class EuchreGame(tk.Tk):
         choices_frame.pack(fill=tk.X, padx=12)
         favorites = set(self.settings_store.data.get("favorites", []))
         variables = {}
-        for index, label in enumerate(AI_PROFILE_CHOICES):
+        for index, label in enumerate(active_profile_choice_labels()):
             profile = label.split(" (")[0]
             variable = tk.BooleanVar(value=profile in favorites)
             variables[profile] = variable
@@ -5466,10 +5538,7 @@ class EuchreGame(tk.Tk):
                      self.get_smart_discard_index(0))
             return f"Discard {self.hands[0][index]}"
         if self.game_state == "playing" and self.current_turn == 0:
-            if profile == "Noob":
-                index = random.choice(self.get_legal_moves(self.hands[0]))
-                return f"Play {self.hands[0][index]} (random)"
-            if profile in NEURAL_PROFILES:
+            if profile in NEURAL_PROFILES and profile != "Iron Monte":
                 index, confidence = self.get_cheems_best_move(0)
                 return f"Play {self.hands[0][index]} ({confidence:.1f}%)"
             index = self.ai_model.get_best_move(self, 0)
@@ -5591,6 +5660,7 @@ class EuchreGame(tk.Tk):
             0, 2 ** 63)))
         fields = tk.Frame(setup, bg=self.coach_bg_color)
         fields.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 14))
+        active_profiles = load_active_tournament_profiles()
         for row, (label, variable) in enumerate([
                 ("Season name", name_var), ("Partner", partner_var),
                 ("Games/opponent", games_var),
@@ -5601,7 +5671,7 @@ class EuchreGame(tk.Tk):
             if row == 1:
                 widget = ttk.Combobox(
                     fields, textvariable=variable,
-                    values=list(TOURNAMENT_PROFILES), state="readonly", width=24)
+                    values=active_profiles, state="readonly", width=24)
             elif row in (2, 3):
                 widget = tk.Spinbox(
                     fields, from_=1 if row == 2 else 2,
@@ -5612,7 +5682,7 @@ class EuchreGame(tk.Tk):
         opponents = tk.Listbox(
             setup, selectmode=tk.MULTIPLE, exportselection=False, height=7)
         opponents.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
-        for profile in TOURNAMENT_PROFILES:
+        for profile in active_profiles:
             opponents.insert(tk.END, profile)
             opponents.selection_set(tk.END)
 
@@ -5691,9 +5761,10 @@ class EuchreGame(tk.Tk):
             "tournament_setup", "Profile Tournament", "500x640")
         if not created:
             return
-        profiles = list(TOURNAMENT_PROFILES)
-        profile_a = tk.StringVar(value="Arbiter")
-        profile_b = tk.StringVar(value="Ironclad")
+        profiles = load_active_tournament_profiles()
+        profile_a = tk.StringVar(value=profiles[0])
+        profile_b = tk.StringVar(
+            value=profiles[1] if len(profiles) > 1 else profiles[0])
         games_var = tk.IntVar(value=3)
         randomize_var = tk.BooleanVar(value=False)
         randomize_each_game_var = tk.BooleanVar(value=False)
@@ -6201,7 +6272,7 @@ class EuchreGame(tk.Tk):
         roster = tk.Listbox(
             dialog, selectmode=tk.MULTIPLE, exportselection=False, height=14)
         roster.pack(fill=tk.BOTH, expand=True, padx=24)
-        for profile in TOURNAMENT_PROFILES:
+        for profile in load_active_tournament_profiles():
             roster.insert(tk.END, profile)
             roster.selection_set(tk.END)
 
@@ -7242,11 +7313,6 @@ class EuchreGame(tk.Tk):
         suits_to_check = [self.up_card.suit] if round_num == 1 else [s for s in SUITS_T if s != self.up_card.suit]
         is_stuck = (round_num == 2 and self.passed_count == 3 and self.dealer_idx == player_idx)
         profile = self.ai_profiles.get(str(player_idx), "Human")
-
-        if profile == "Hoyle":
-            action, suit, is_loner = self._hoyle_bid_decision(
-                player_idx, round_num, is_stuck)
-            return action, suit, is_loner, 100.0, 3.0, is_stuck
         
         if profile in NEURAL_PROFILES:
             return self._simulate_cheems_bidding(
@@ -7303,23 +7369,7 @@ class EuchreGame(tk.Tk):
         return auction_passed_seats(self.dealer_idx, self.passed_count)
 
     def _bid_style_margins(self, player_idx, round_num, profile):
-        call_margin = 0.0
-        loner_margin = 0.0
-        if profile == "Scoreboard General":
-            own_score, opponent_score = self._scores_for_player(player_idx)
-            score_gap = own_score - opponent_score
-            if score_gap >= 2 or own_score >= 8:
-                call_margin, loner_margin = 0.08, 0.08
-            elif score_gap <= -2:
-                call_margin, loner_margin = -0.08, -0.04
-            if opponent_score >= 9 and own_score < 9:
-                call_margin = min(call_margin, -0.05)
-            seat_from_dealer = (player_idx - self.dealer_idx) % 4
-            if round_num == 2 and seat_from_dealer == 1:
-                call_margin -= 0.03
-            elif round_num == 1 and player_idx == self.dealer_idx:
-                call_margin -= 0.02
-        return call_margin, loner_margin
+        return 0.0, 0.0
 
     def _simulate_cheems_bidding(self, player_idx, round_num, suits_to_check, is_stuck,
                                  known_hands=None, rollouts=None):
@@ -7352,19 +7402,16 @@ class EuchreGame(tk.Tk):
                 known_hands=(self._get_neural_known_hands(player_idx)
                              if known_hands is None else known_hands),
                 call_margin=call_margin, loner_margin=loner_margin)
-            if profile == "Saboteur":
-                best_action = min(visit_dict, key=visit_dict.get)
-            else:
-                ranked_actions = sorted(
-                    visit_dict, key=visit_dict.get, reverse=True)
-                best_action = ranked_actions[0]
-                if (profile == "Risk Manager" and len(ranked_actions) > 1
-                        and visit_dict[best_action] - visit_dict[ranked_actions[1]] <= 0.05):
-                    def action_risk(action):
-                        if action == BID_PASS:
-                            return 0
-                        return 2 if bid_action_details(action)[1] else 1
-                    best_action = min(ranked_actions[:2], key=action_risk)
+            ranked_actions = sorted(
+                visit_dict, key=visit_dict.get, reverse=True)
+            best_action = ranked_actions[0]
+            if (profile == "Risk Manager" and len(ranked_actions) > 1
+                    and visit_dict[best_action] - visit_dict[ranked_actions[1]] <= 0.05):
+                def action_risk(action):
+                    if action == BID_PASS:
+                        return 0
+                    return 2 if bid_action_details(action)[1] else 1
+                best_action = min(ranked_actions[:2], key=action_risk)
             confidence = visit_dict[best_action] * 100.0
             est_points = root_q * 4.0  # value head is loner-aware scaled (caller_pts/4)
             if best_action == BID_PASS:
@@ -7457,10 +7504,7 @@ class EuchreGame(tk.Tk):
         self._record_session_event("ai_consultation", {
             "profile": profile_name, "phase": self.game_state})
         self.ai_profiles["0"] = profile_name
-        if profile_name == "Noob":
-            self._show_noob_hint()
-            return
-        if profile_name in {"The MC", "Card Counter", "Hoyle"}:
+        if profile_name in {"The MC", "Iron Monte"}:
             self.get_hint()
             return
 
@@ -7489,38 +7533,13 @@ class EuchreGame(tk.Tk):
         def calculate_hint():
             ranked_moves = self.get_cheems_ranked_moves(
                 0, known_hands=known_hands, neural_brain=neural_brain)
-            if profile_name == "Saboteur":
-                ranked_moves.reverse()
-            elif (profile_name == "Risk Manager" and len(ranked_moves) > 1
+            if (profile_name == "Risk Manager" and len(ranked_moves) > 1
                   and ranked_moves[0][1] - ranked_moves[1][1] <= 5.0):
                 ranked_moves[0], ranked_moves[1] = ranked_moves[1], ranked_moves[0]
             return ranked_moves
         self._launch_search(
             f"{profile_name} hint", calculate_hint,
             lambda ranked: self._finish_cheems_hint(ranked, profile_name))
-
-    def _show_noob_hint(self):
-        if self.game_state in {"bidding_r1", "bidding_r2"}:
-            round_num = 1 if self.game_state == "bidding_r1" else 2
-            is_stuck = round_num == 2 and self.dealer_idx == 0 and self.passed_count == 3
-            actions = legal_bid_actions(round_num, self.up_card.suit, is_stuck)
-            action = random.choice(actions)
-            if action == BID_PASS:
-                suggestion = "Pass"
-            else:
-                suit, is_loner = bid_action_details(action)
-                suggestion = f"Call {suit}" + (" alone" if is_loner else "")
-            messagebox.showinfo(
-                "Noob Bidding Advice", f"Noob randomly suggests: {suggestion}")
-            return
-        if self.game_state == "discarding":
-            card = random.choice(self.hands[0])
-            messagebox.showinfo(
-                "Noob Discard Advice", f"Noob randomly suggests discarding {card}.")
-            return
-        legal_moves = self.get_legal_moves(self.hands[0])
-        chosen = random.choice(legal_moves)
-        self._show_multi_hint_result([(chosen, 100.0)], agent_name="Noob")
 
     def get_hint(self):
         if self.game_state in ["bidding_r1", "bidding_r2"] and self.bidding_player == 0: self.get_bidding_hint(); return
@@ -7688,7 +7707,7 @@ class EuchreGame(tk.Tk):
                 self.up_card, self.dealer_idx, self.team1_score, self.team2_score,
                 nn_eval, determinizations=determinizations,
                 known_hands=known_hands, discard_candidates=hand,
-                choose_worst=self.ai_profiles.get(str(player_idx)) == "Saboteur",
+                choose_worst=False,
                 return_ranked=return_ranked)
             if return_ranked:
                 return [(hand.index(card), score) for card, score in result]
@@ -7822,9 +7841,7 @@ class EuchreGame(tk.Tk):
                 rollouts=rollouts, known_hands=known_hands,
                 call_margin=call_margin, loner_margin=loner_margin)
             ranked = sorted(visit_dict.items(), key=lambda kv: kv[1], reverse=True)
-            if profile == "Saboteur":
-                ranked.reverse()
-            elif (profile == "Risk Manager" and len(ranked) > 1
+            if (profile == "Risk Manager" and len(ranked) > 1
                   and ranked[0][1] - ranked[1][1] <= 0.05):
                 def action_risk(item):
                     action = item[0]
@@ -9057,7 +9074,7 @@ class EuchreGame(tk.Tk):
         if len(legal_moves_indices) == 1: self._apply_ai_move(player_idx, legal_moves_indices[0]); return
         
         prof = self.ai_profiles.get(str(player_idx), "Human")
-        if prof in NEURAL_PROFILES:
+        if prof in NEURAL_PROFILES and prof != "Iron Monte":
             known_hands = self._get_autoplay_known_hands(player_idx)
             state_pack = self.ai_model.pack_ui_state(self)
             self._launch_search(
@@ -9069,7 +9086,7 @@ class EuchreGame(tk.Tk):
                     player_idx, action_idx, confidence))
             return
 
-        if prof not in {"The MC", "Card Counter", "Noob"}:
+        if prof not in {"The MC", "Iron Monte"}:
             dump_idx = self.get_deterministic_dump_move(player_idx, legal_moves_indices)
             if dump_idx is not None: self._apply_ai_move(player_idx, dump_idx); return
 
