@@ -337,7 +337,9 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
     if profile_name == "Hoyle":
         return "Arbiter"
-    if profile_name == "Iron Monte":
+    if profile_name in {"Iron Monte", "Iron Solver"}:
+        return "Ironclad"
+    if profile_name == "Monte Prime":
         return "Ironclad"
     if profile_name in {"Arbiter", "Ironclad", "Kyle", "Committee",
                         "Unanimous Council"}:
@@ -620,11 +622,24 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         else:
             if active_profile == "Iron Monte":
                 # Iron Monte contract phase is Ironclad, but play phase is
-                # intentionally a deeper MCTS search regime.
+                # intentionally a deeper Ironclad-guided MCTS search regime.
                 active_iterations = max(active_iterations * 2, 400)
+            elif active_profile == "Monte Prime":
+                # Keep Ironclad's contract discipline, then use the Council
+                # ensemble as policy/value guidance for a deeper play search.
+                active_iterations = max(active_iterations * 3, 600)
+            elif active_profile == "Iron Solver":
+                # Search like Iron Monte early, then spend heavily once only
+                # two tricks remain and the hidden-card space is much smaller.
+                completed_tricks = sim.team1_tricks + sim.team2_tricks
+                active_iterations = max(
+                    active_iterations * (6 if completed_tricks >= 3 else 2),
+                    1200 if completed_tricks >= 3 else 400)
             if active_profile == "Unanimous Council":
                 active_iterations *= 2
-            active_brain = brain_for_seat(sim.current_turn, caller_idx)
+            active_brain = (
+                "Unanimous Council" if active_profile == "Monte Prime"
+                else brain_for_seat(sim.current_turn, caller_idx))
 
             chosen_move = run_eval_mcts(
                 sim, gpu_pipe, active_brain, active_iterations, list(played_cards), up_card, dealer_idx,

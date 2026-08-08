@@ -47,6 +47,7 @@ LAB_SETTINGS_DEFAULTS = {
     "round_robin_hands": "200",
     "round_robin_label_prefix": "round_robin",
     "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
+    "hybrid_profiles_v1_seen": False,
     "shared_queue_enabled": False,
     "shared_queue_path": os.path.join(
         NODE_STATE_DIR, "bot_euchre_headless_jobs.sqlite3"),
@@ -661,15 +662,20 @@ class EvalGui(tk.Tk):
         if not isinstance(saved, list):
             return list(self.all_profiles)
         selected = [profile for profile in saved if profile in self.all_profiles]
+        if not self.lab_settings.get("hybrid_profiles_v1_seen", False):
+            for profile in ("Monte Prime", "Iron Solver"):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["hybrid_profiles_v1_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
 
     def _recommended_core_profiles(self):
         preferred = [
-            "Ironclad", "Risk Manager", "Unanimous Council", "The Closer",
-            "The MC", "Card Counter", "Arbiter", "Committee",
-            "Scoreboard General", "Iron Monte",
+            "Ironclad", "Iron Monte", "Monte Prime", "Iron Solver",
+            "Risk Manager", "Unanimous Council", "The Closer", "The MC",
+            "Arbiter",
         ]
         selected = [profile for profile in preferred if profile in self.all_profiles]
         if len(selected) >= 2:
@@ -1325,6 +1331,7 @@ class EvalGui(tk.Tk):
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
             "active_profiles": list(self.active_profiles),
+            "hybrid_profiles_v1_seen": True,
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
             "round_robin_profiles": list(self.round_robin_profiles),

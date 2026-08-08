@@ -813,6 +813,8 @@ def profile_checkpoint_paths(profile_name):
         "Counterpuncher": [IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Risk Manager": [IRONCLAD_WEIGHTS_PATH],
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
+        "Monte Prime": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
+        "Iron Solver": [IRONCLAD_WEIGHTS_PATH],
         "Saboteur": [IRONCLAD_WEIGHTS_PATH],
         "Scoreboard General": [ARBITER_WEIGHTS_PATH],
         "Copycat": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
@@ -1363,7 +1365,9 @@ AI_PROFILE_CHOICES = {
     "Copycat (Human Style Learner)": "Tracks the human's passes, calls, loners, and card aggression, then adopts the closest existing neural personality.",
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
-    "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep pure MCTS for trick play.",
+    "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
+    "Monte Prime (Council MCTS Hybrid)": "Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance.",
+    "Iron Solver (Endgame Hybrid)": "Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks.",
 }
 LEGACY_PROFILE_FALLBACKS = {
     "Noob": "Arbiter",
@@ -1378,8 +1382,9 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Copycat", "Wildcard",
-    "Iron Monte",
+    "Iron Monte", "Monte Prime", "Iron Solver",
 }
+HYBRID_MCTS_PROFILES = {"Iron Monte", "Monte Prime", "Iron Solver"}
 HEADLESS_MCTS_PROFILES = {
     "The MC",
 }
@@ -1451,6 +1456,10 @@ def load_active_tournament_profiles(default_profiles=None):
         return profiles
     filtered = [
         profile for profile in active_profiles if profile in TOURNAMENT_PROFILES]
+    if not settings.get("hybrid_profiles_v1_seen", False):
+        for profile in ("Monte Prime", "Iron Solver"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
     if len(filtered) < 2:
         return profiles
     return filtered
@@ -1490,7 +1499,8 @@ PROFILE_CATEGORIES = {
     "Kyle": "Base Neural",
     "Unanimous Council": "Ensemble", "The Closer": "Router",
     "Risk Manager": "Router", "Copycat": "Learner",
-    "Iron Monte": "Hybrid",
+    "Iron Monte": "Hybrid", "Monte Prime": "Hybrid",
+    "Iron Solver": "Hybrid",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
 }
 HELP_TOPICS = [
@@ -3257,10 +3267,22 @@ class ISMCTS_Multiprocessing_Agent:
     def get_best_move(self, ui_game, player_idx, return_confidence=False, override_iters=None, return_all_moves=False, prepacked_state=None):
         profile = ui_game.ai_profiles.get(str(player_idx), "Human")
 
-        if profile == "Iron Monte":
-            # Hybrid profile: contract phase uses Ironclad routing, but card play
-            # is intentionally deep pure MCTS.
-            profile = "The MC"
+        if profile in HYBRID_MCTS_PROFILES:
+            base_iterations = (ui_game.hint_neural_play_iters if player_idx == 0
+                               else ui_game.table_neural_play_iters)
+            if profile == "Monte Prime":
+                iterations = max(base_iterations * 3, 600)
+            elif (profile == "Iron Solver"
+                  and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
+                iterations = max(base_iterations * 6, 1200)
+            else:
+                iterations = max(base_iterations * 2, 400)
+            if return_all_moves:
+                return ui_game.get_cheems_ranked_moves(
+                    player_idx, iterations=iterations)
+            best_move, confidence = ui_game.get_cheems_best_move(
+                player_idx, iterations=iterations)
+            return (best_move, confidence) if return_confidence else best_move
         
         if profile in NEURAL_PROFILES:
             if return_all_moves:
@@ -3271,8 +3293,6 @@ class ISMCTS_Multiprocessing_Agent:
         iters_to_run = self.human_total_iters
         if override_iters: 
             iters_to_run = override_iters
-        elif ui_game.ai_profiles.get(str(player_idx), "Human") == "Iron Monte":
-            iters_to_run = max(CHEEMS_UI_PLAY_ITERS * 2, self.human_total_iters)
         elif profile in HEURISTIC_PROFILES:
             iters_to_run = CHEEMS_UI_PLAY_ITERS
         
@@ -3868,8 +3888,12 @@ class EuchreGame(tk.Tk):
             return self.unanimous_council_brain
         if profile == "Risk Manager":
             return self.ironclad_brain
-        if profile == "Iron Monte":
+        if profile in {"Iron Monte", "Iron Solver"}:
             return self.ironclad_brain
+        if profile == "Monte Prime":
+            if self.game_state in {"bidding_r1", "bidding_r2", "discarding"}:
+                return self.ironclad_brain
+            return self.unanimous_council_brain
         if profile == "The Closer":
             own_score, opponent_score = self._scores_for_player(player_idx)
             if own_score >= 8 or own_score > opponent_score:
@@ -5423,7 +5447,9 @@ class EuchreGame(tk.Tk):
             label = self._profile_display_label(profile)
             description = AI_PROFILE_CHOICES.get(label, "")
             route = "Pure MCTS" if profile == "The MC" else (
-                "Hybrid: Ironclad contract + deep MCTS play" if profile == "Iron Monte" else
+                "Hybrid: Ironclad contract + Council-guided deep MCTS" if profile == "Monte Prime" else
+                "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
+                "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
                 f"{profile} checkpoint")
@@ -5583,7 +5609,7 @@ class EuchreGame(tk.Tk):
                      self.get_smart_discard_index(0))
             return f"Discard {self.hands[0][index]}"
         if self.game_state == "playing" and self.current_turn == 0:
-            if profile in NEURAL_PROFILES and profile != "Iron Monte":
+            if profile in NEURAL_PROFILES and profile not in HYBRID_MCTS_PROFILES:
                 index, confidence = self.get_cheems_best_move(0)
                 return f"Play {self.hands[0][index]} ({confidence:.1f}%)"
             index = self.ai_model.get_best_move(self, 0)
@@ -7549,7 +7575,7 @@ class EuchreGame(tk.Tk):
         self._record_session_event("ai_consultation", {
             "profile": profile_name, "phase": self.game_state})
         self.ai_profiles["0"] = profile_name
-        if profile_name in {"The MC", "Iron Monte"}:
+        if profile_name == "The MC" or profile_name in HYBRID_MCTS_PROFILES:
             self.get_hint()
             return
 
@@ -9119,7 +9145,26 @@ class EuchreGame(tk.Tk):
         if len(legal_moves_indices) == 1: self._apply_ai_move(player_idx, legal_moves_indices[0]); return
         
         prof = self.ai_profiles.get(str(player_idx), "Human")
-        if prof in NEURAL_PROFILES and prof != "Iron Monte":
+        if prof in HYBRID_MCTS_PROFILES:
+            base_iterations = self.table_neural_play_iters
+            if prof == "Monte Prime":
+                iterations = max(base_iterations * 3, 600)
+            elif (prof == "Iron Solver"
+                  and self.team1_tricks + self.team2_tricks >= 3):
+                iterations = max(base_iterations * 6, 1200)
+            else:
+                iterations = max(base_iterations * 2, 400)
+            known_hands = self._get_autoplay_known_hands(player_idx)
+            state_pack = self.ai_model.pack_ui_state(self)
+            self._launch_search(
+                f"{prof} table play",
+                lambda: self.get_cheems_best_move(
+                    player_idx, known_hands=known_hands,
+                    iterations=iterations, state_pack=state_pack),
+                lambda action_idx, confidence: self._apply_ai_move(
+                    player_idx, action_idx, confidence))
+            return
+        if prof in NEURAL_PROFILES and prof not in HYBRID_MCTS_PROFILES:
             known_hands = self._get_autoplay_known_hands(player_idx)
             state_pack = self.ai_model.pack_ui_state(self)
             self._launch_search(
@@ -9131,7 +9176,7 @@ class EuchreGame(tk.Tk):
                     player_idx, action_idx, confidence))
             return
 
-        if prof not in {"The MC", "Iron Monte"}:
+        if prof != "The MC" and prof not in HYBRID_MCTS_PROFILES:
             dump_idx = self.get_deterministic_dump_move(player_idx, legal_moves_indices)
             if dump_idx is not None: self._apply_ai_move(player_idx, dump_idx); return
 

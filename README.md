@@ -190,7 +190,7 @@ and provenance summary.
 
 ## AI Profiles
 
-Bot Euchre currently offers 10 selectable profiles. Profiles can control table
+Bot Euchre currently offers 12 selectable profiles. Profiles can control table
 seats, provide advice through **Ask an AI**, or take over the human seat through
 **Autoplay**.
 
@@ -205,7 +205,9 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | Copycat | Learns from the human's passes, calls, loners, and card aggression, then adopts the nearest trained style. |
 | Wildcard | Randomly selects Arbiter, Ironclad, or Kyle at the start of each hand. |
 | The MC | Pure information-set MCTS without a neural checkpoint. |
-| Iron Monte | Hybrid profile that uses Ironclad for bidding/discard and deep pure MCTS for card play. |
+| Iron Monte | Hybrid profile that uses Ironclad for bidding/discard and deep Ironclad-guided MCTS for card play. |
+| Monte Prime | Uses Ironclad for bidding/discard and deeper Council-guided MCTS for card play. |
+| Iron Solver | Uses Ironclad for bidding/discard, then sharply deepens guided search for the final two tricks. |
 
 ## Playing and Coaching
 
@@ -213,7 +215,7 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 
 Use the **Ask an AI** menu while the human seat has an active bidding, discard, or
 play decision. Any profile can give advice. Neural advisers rank candidate actions,
-while The MC and Iron Monte use information-set search during play.
+while The MC and the three Iron hybrids use information-set search during play.
 
 Each consultation is recorded in the session journal. A progress indicator appears
 while longer searches are running.
@@ -415,7 +417,7 @@ schedule, and selectable head-to-head records.
 neural AI profiles available in the main game rather than archived generations.
 The profile dropdown includes the curated main-game roster: Arbiter, Ironclad,
 Kyle, The Closer, Unanimous Council, Risk Manager, Copycat, Wildcard, The MC,
-and Iron Monte.
+Iron Monte, Monte Prime, and Iron Solver.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.
