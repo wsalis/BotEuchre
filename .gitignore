@@ -14,3 +14,7 @@ player_stats.json
 *.egg-info/
 .venv/
 venv/
+
+# macOS Finder metadata
+.DS_Store
+**/.DS_Store
