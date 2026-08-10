@@ -196,22 +196,22 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 
 | Profile | Behavior |
 |---|---|
-| Arbiter | Balanced Gen50 neural checkpoint with standard AlphaZero search. |
-| Ironclad | Frozen conservative neural specialist. |
-| Kyle | Aggressive neural specialist. |
-| The Closer | Routes to Ironclad while leading or near victory, Kyle while trailing, and Arbiter in balanced games. |
-| Unanimous Council | Reinforces moves independently preferred by all three brains and searches more deeply. |
-| Risk Manager | Uses Ironclad evaluations and favors the safer alternative when the top choices are close. |
-| Wildcard | Randomly selects Arbiter, Ironclad, or Kyle at the start of each hand. |
-| The MC | Pure information-set MCTS without a neural checkpoint. |
-| Iron Monte | Hybrid profile that uses Ironclad for bidding/discard and deep Ironclad-guided MCTS for card play. |
-| Iron Sleuth | Uses Ironclad bidding with a near-tie play preference that preserves trump and information. |
-| Iron Closer | Adjusts Ironclad's bidding and near-tie play choices according to the game score. |
-| Iron Clutch | Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks. |
-| Iron Endgame Edge | Score-tuned endgame variant that combines Iron Clutch selective deepening with aggressive closeout tie-breaks. |
-| Monte Prime | Uses Ironclad for bidding/discard and deeper Council-guided MCTS for card play. |
-| Iron Solver | Uses Ironclad for bidding/discard, then sharply deepens guided search for the final two tricks. |
-| Iron Oracle | Keeps Ironclad's close bid unless a deeper bid search strongly disagrees, then uses Monte Prime play. |
+| Arbiter | Balanced baseline: neutral bid margins, standard neural search depth, and steady all-phase play without strong risk bias. |
+| Ironclad | Conservative baseline: more selective contract style, lower thin-call appetite, and safer average trick lines. |
+| Kyle | Aggressive baseline: calls thinner hands, pushes scoring volatility, and accepts higher euchre risk for upside. |
+| The Closer | Score-aware router: Ironclad while ahead or near game point, Kyle when clearly trailing, Arbiter in neutral spots. |
+| Unanimous Council | Three-brain consensus ensemble: upweights moves independently favored by Arbiter, Ironclad, and Kyle, with deeper search. |
+| Risk Manager | Conservative router on Ironclad: when top options are near-tied, it intentionally selects the lower-variance line. |
+| Wildcard | Hand-level identity randomizer: picks Arbiter, Ironclad, or Kyle once per hand and keeps that style for the full hand. |
+| The MC | Pure information-set MCTS (no neural checkpoint): strongest for explicit search experimentation and non-neural benchmarks. |
+| Iron Monte | Hybrid: Ironclad for bidding/discard, then deeper Ironclad-guided MCTS for trick play to reduce tactical blind spots. |
+| Iron Sleuth | Probe-first router: Ironclad bidding plus near-tie play rules that preserve flexibility, information, and trump timing. |
+| Iron Closer | Score-tuned Ironclad router: opens up while behind, tightens while protecting a lead, and pressures closeout thresholds. |
+| Iron Clutch | Selective deepening specialist: Sleuth-style policy with substantial extra search budget in the final tricks. |
+| Iron Endgame Edge | Score-aware Clutch variant: keeps selective endgame deepening but applies more assertive closeout tie-break behavior. |
+| Monte Prime | Council-guided hybrid: Ironclad contract discipline plus deeper Unanimous Council-guided MCTS during trick play. |
+| Iron Solver | Endgame-heavy hybrid: Ironclad early structure, then the most aggressive late-hand deepening (especially final two tricks). |
+| Iron Oracle | Bid arbitration hybrid: defaults to Ironclad bidding unless deeper bid search strongly disagrees, then plays via Monte Prime. |
 
 ## Playing and Coaching
 
