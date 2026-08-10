@@ -1,4 +1,4 @@
-﻿"""Canonical Bot Euchre game engine and interactive GUI.
+"""Canonical Bot Euchre game engine and interactive GUI.
 
 This root copy unifies the Vanilla, Ironclad, and Kyle neural profiles, each
 loaded from its own checkpoint file in this directory.
@@ -816,6 +816,12 @@ def profile_checkpoint_paths(profile_name):
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
         "Iron Closer": [IRONCLAD_WEIGHTS_PATH],
+        "Sleuth Score Closer": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Clutch": [IRONCLAD_WEIGHTS_PATH],
+        "Sleuth Endgame Turbo": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Endgame Edge": [IRONCLAD_WEIGHTS_PATH],
+        "Sleuth Turbo Closer": [IRONCLAD_WEIGHTS_PATH],
+        "Sleuth Risk Budget": [IRONCLAD_WEIGHTS_PATH],
         "Monte Prime": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Iron Solver": [IRONCLAD_WEIGHTS_PATH],
         "Iron Oracle": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
@@ -1309,12 +1315,12 @@ else:
     class CheemsNeuralNet:
         pass
 
-SUITS_T = ['♠', '♥', '♦', '♣']
+SUITS_T = ['♣', '♦', '♥', '♠']
 RANKS_T = ['9', '10', 'J', 'Q', 'K', 'A']
-SAME_COLOR_T = {'♠': '♣', '♣': '♠', '♥': '♦', '♦': '♥'}
+SAME_COLOR_T = {'♣': '♠', '♠': '♣', '♦': '♥', '♥': '♦'}
 ALL_DECK_KEYS = [f"{r}{s}" for s in SUITS_T for r in RANKS_T]
 CARD_TO_INDEX = {card: i for i, card in enumerate(ALL_DECK_KEYS)}
-SUIT_TO_INDEX = {'♠': 0, '♥': 1, '♦': 2, '♣': 3}
+SUIT_TO_INDEX = {'♣': 0, '♦': 1, '♥': 2, '♠': 3}
 
 # ==========================================
 # BID ACTION SPACE (July 2026 bidding overhaul)
@@ -1366,13 +1372,13 @@ AI_PROFILE_CHOICES = {
     "The Closer (Score-Aware Router)": "Uses Ironclad while leading or near victory, Kyle when trailing, and Vanilla in balanced games.",
     "Unanimous Council (Deep Consensus)": "Reinforces moves all three neural brains independently favor and doubles ensemble search depth.",
     "Risk Manager (Close-Choice Conservative)": "Uses Ironclad evaluations and takes the safer alternative when the top two search choices are nearly tied.",
-    "Copycat (Human Style Learner)": "Tracks the human's passes, calls, loners, and card aggression, then adopts the closest existing neural personality.",
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
-    "Iron Anchor (Conservative Router)": "Keeps Ironclad's contract discipline but leans toward safer, lower-risk play choices when the top two moves are close.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
     "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
+    "Iron Clutch (Selective Deepening)": "Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks.",
+    "Iron Endgame Edge (Score-Tuned Endgame)": "Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior.",
     "Monte Prime (Council MCTS Hybrid)": "Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance.",
     "Iron Solver (Endgame Hybrid)": "Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks.",
     "Iron Oracle (Bid-Arbitration Hybrid)": "Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play.",
@@ -1385,16 +1391,25 @@ LEGACY_PROFILE_FALLBACKS = {
     "Scoreboard General": "Risk Manager",
     "Committee": "Unanimous Council",
     "Card Counter": "The MC",
+    # Deactivated profiles map to supported equivalents for old saves.
+    "Iron Anchor": "Ironclad",
+    "Copycat": "Arbiter",
+    "Sleuth Score Closer": "Iron Clutch",
+    "Sleuth Risk Budget": "Iron Clutch",
+    "Sleuth Endgame Turbo": "Iron Clutch",
+    "Sleuth Turbo Closer": "Iron Endgame Edge",
 }
 NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
-    "Copycat", "Wildcard",
-    "Iron Monte", "Iron Anchor", "Iron Sleuth", "Iron Closer",
+    "Wildcard",
+    "Iron Monte", "Iron Sleuth", "Iron Closer",
+    "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
 HYBRID_MCTS_PROFILES = {
-    "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle"}
+    "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle",
+    "Iron Clutch", "Iron Endgame Edge"}
 HEADLESS_MCTS_PROFILES = {
     "The MC",
 }
@@ -1412,12 +1427,17 @@ def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
         return None
     if len(ranked_moves) < 2 or ranked_moves[0][1] - ranked_moves[1][1] > tie_margin:
         return ranked_moves[0]
-    if profile == "Iron Anchor":
-        return ranked_moves[1]
     if profile == "Iron Sleuth" and sleuth_key is not None:
         return min(ranked_moves[:2], key=sleuth_key)
     if profile == "Iron Closer" and score_gap <= -2:
         return ranked_moves[1]
+    if profile == "Iron Clutch" and sleuth_key is not None:
+        return min(ranked_moves[:2], key=sleuth_key)
+    if profile == "Iron Endgame Edge":
+        if score_gap <= -2:
+            return ranked_moves[1]
+        if sleuth_key is not None:
+            return min(ranked_moves[:2], key=sleuth_key)
     return ranked_moves[0]
 
 
@@ -1489,7 +1509,12 @@ def load_active_tournament_profiles(default_profiles=None):
         if "Iron Oracle" in profiles and "Iron Oracle" not in filtered:
             filtered.append("Iron Oracle")
     if not settings.get("iron_profiles_v1_seen", False):
-        for profile in ("Iron Anchor", "Iron Sleuth", "Iron Closer"):
+        for profile in ("Iron Sleuth", "Iron Closer"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_variants_v1_seen", False):
+        for profile in (
+                "Iron Clutch", "Iron Endgame Edge"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
     if len(filtered) < 2:
@@ -1555,11 +1580,13 @@ PROFILE_CATEGORIES = {
     "Arbiter": "Base Neural", "Ironclad": "Base Neural",
     "Kyle": "Base Neural",
     "Unanimous Council": "Ensemble", "The Closer": "Router",
-    "Risk Manager": "Router", "Copycat": "Learner",
+    "Risk Manager": "Router",
     "Iron Monte": "Hybrid", "Monte Prime": "Hybrid",
     "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
-    "Iron Anchor": "Router", "Iron Sleuth": "Router",
+    "Iron Sleuth": "Router",
     "Iron Closer": "Router",
+    "Iron Clutch": "Hybrid",
+    "Iron Endgame Edge": "Hybrid",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
 }
 HELP_TOPICS = [
@@ -1636,8 +1663,7 @@ HELP_TOPICS = [
         "Routers: The Closer favors Ironclad while ahead or near victory and Kyle "
         "while behind. Risk Manager chooses the safer alternative when Ironclad's "
         "top choices are close.\n\n"
-        "Adaptive personalities: Copycat watches your calls and play tendencies, "
-        "then imitates the closest base style. Wildcard chooses one base brain "
+        "Adaptive personalities: Wildcard chooses one base brain "
         "at random for each hand.\n\n"
         "Search profiles: The MC uses information-set MCTS without a neural "
         "network.\n\n"
@@ -1743,8 +1769,8 @@ HELP_TOPICS = [
         "Defeat every qualifier to become league champion.\n\n"
         "Open Tools > Human League Season to create, inspect, or resume the personal "
         "season. It is node-local and separate from automated League Mode and Elo. "
-        "Partner and opponent checkpoint identities, search budgets, and Copycat "
-        "style are frozen when the season starts.")),
+        "Partner and opponent checkpoint identities and search budgets are frozen "
+        "when the season starts.")),
     ("Elo Ratings & Seasons", (
         "Elo is a long-term rating for completed GUI tournament games. Every "
         "profile/checkpoint identity starts at 1500. A win transfers rating from "
@@ -2182,6 +2208,26 @@ def _continue_auction_by_policy(hands, up_card, dealer_idx, round_num, passed_se
     """Plays the auction forward with every remaining seat choosing the argmax of its
     masked bid-head policy (used inside bid-search rollouts to model opponents AND
     the decider's own future decisions). Returns (caller, trump, is_loner, called_round)."""
+    def _fallback_round2_call_suit(up_suit):
+        """Returns a deterministic fallback suit for malformed auction states.
+        Prefers legal round-2 call actions, then degrades to any known suit,
+        and finally up_suit itself so callers never crash."""
+        forced_actions = legal_bid_actions(2, up_suit, True)
+        for forced_action in forced_actions:
+            suit, _ = bid_action_details(forced_action)
+            if suit is not None and suit != up_suit:
+                return suit
+        for forced_action in forced_actions:
+            suit, _ = bid_action_details(forced_action)
+            if suit is not None:
+                return suit
+        for suit in SUITS_T:
+            if suit != up_suit:
+                return suit
+        if SUITS_T:
+            return SUITS_T[0]
+        return up_suit
+
     passed = list(passed_seats)
     rnd = round_num
     while True:
@@ -2190,6 +2236,13 @@ def _continue_auction_by_policy(hands, up_card, dealer_idx, round_num, passed_se
                 continue
             is_stuck = (rnd == 2 and seat == dealer_idx)
             actions = legal_bid_actions(rnd, up_card.suit, is_stuck)
+            if not actions:
+                # Fail safe for malformed rollout states: non-stuck seats pass,
+                # stuck dealer force-calls a legal next suit to keep search alive.
+                if is_stuck:
+                    return seat, _fallback_round2_call_suit(up_card.suit), False, 2
+                passed.append(seat)
+                continue
             tensor = encode_bid_state(hands[seat], seat, up_card, dealer_idx, rnd,
                                       passed, t1_score, t2_score)
             probs, _ = nn_eval_fn(tensor)
@@ -2203,7 +2256,7 @@ def _continue_auction_by_policy(hands, up_card, dealer_idx, round_num, passed_se
             passed = []
         else:
             # Unreachable with stick-the-dealer; fail safe rather than loop forever.
-            return dealer_idx, next(s for s in SUITS_T if s != up_card.suit), False, 2
+            return dealer_idx, _fallback_round2_call_suit(up_card.suit), False, 2
 
 
 def _bid_rollout(action, my_hand, unknown_base, up_card, dealer_idx, decider_idx,
@@ -2382,6 +2435,12 @@ def _discard_playout_value(hands, trump_suit, caller_idx, is_loner, loner_partne
             sim.current_turn = (sim.current_turn + 1) % 4
             continue
         legal_moves = sim.get_legal_moves()
+        if not legal_moves:
+            # Fail safe for rare malformed determinization states.
+            fallback = list(sim.hands[sim.current_turn])
+            if not fallback:
+                break
+            legal_moves = fallback
         if len(legal_moves) == 1:
             move = legal_moves[0]
         else:
@@ -3331,6 +3390,9 @@ class ISMCTS_Multiprocessing_Agent:
                                else ui_game.table_neural_play_iters)
             if profile in {"Monte Prime", "Iron Oracle"}:
                 iterations = max(base_iterations * 3, 600)
+            elif (profile in {"Iron Clutch", "Iron Endgame Edge"}
+                  and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
+                iterations = max(base_iterations * 5, 1000)
             elif (profile == "Iron Solver"
                   and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
                 iterations = max(base_iterations * 6, 1200)
@@ -3609,8 +3671,8 @@ class EuchreGame(tk.Tk):
         self.current_hand_seed = state.get("hand_seed")
         self.loner_var.set(self.is_loner)
         self.autoplay_menu_button.config(text=(
-            f"▶ Autoplay: {self.ai_profiles.get('0', 'Off')}"
-            if self.autoplay_mode else "▶ Autoplay: Off"))
+            f"? Autoplay: {self.ai_profiles.get('0', 'Off')}"
+            if self.autoplay_mode else "? Autoplay: Off"))
         if self.trump_suit:
             self.lbl_trump.config(
                 text=f"TRUMP: {self.trump_suit}", bg="yellow")
@@ -3949,7 +4011,9 @@ class EuchreGame(tk.Tk):
             return self.ironclad_brain
         if profile in {"Iron Monte", "Iron Solver"}:
             return self.ironclad_brain
-        if profile in {"Iron Anchor", "Iron Sleuth", "Iron Closer"}:
+        if profile in {
+            "Iron Sleuth", "Iron Closer",
+            "Iron Clutch", "Iron Endgame Edge"}:
             return self.ironclad_brain
         if profile in {"Monte Prime", "Iron Oracle"}:
             if self.game_state in {"bidding_r1", "bidding_r2", "discarding"}:
@@ -3961,13 +4025,6 @@ class EuchreGame(tk.Tk):
                 return self.ironclad_brain
             if opponent_score - own_score >= 2:
                 return self.kyle_brain
-        if profile == "Copycat":
-            copied_profile = max(
-                self.copycat_style_scores, key=self.copycat_style_scores.get)
-            return {
-                "Ironclad": self.ironclad_brain,
-                "Kyle": self.kyle_brain,
-            }.get(copied_profile, self.cheems_brain)
         return self.cheems_brain
 
     def _scores_for_player(self, player_idx):
@@ -4644,7 +4701,7 @@ class EuchreGame(tk.Tk):
         self.ai_profiles["0"] = profile_name if self.autoplay_mode else "Human"
         if hasattr(self, "autoplay_menu_button"):
             label = profile_name if self.autoplay_mode else "Off"
-            self.autoplay_menu_button.config(text=f"▶ Autoplay: {label}")
+            self.autoplay_menu_button.config(text=f"? Autoplay: {label}")
         self.update_scoreboard()
         self.render_human_hand()
         if self.autoplay_mode and not was_autoplaying:
@@ -4946,11 +5003,11 @@ class EuchreGame(tk.Tk):
         controls = tk.Frame(dialog, bg=self.coach_bg_color)
         controls.pack(pady=(0, 10))
         tk.Button(
-            controls, text="◀ Previous",
+            controls, text="? Previous",
             command=lambda: (index_var.set(index_var.get() - 1), render())).pack(
                 side=tk.LEFT, padx=6)
         tk.Button(
-            controls, text="Next ▶",
+            controls, text="Next ?",
             command=lambda: (index_var.set(index_var.get() + 1), render())).pack(
                 side=tk.LEFT, padx=6)
         def replay_deal():
@@ -5182,7 +5239,7 @@ class EuchreGame(tk.Tk):
                 ("rating", "Elo", 65), ("record", "W-L", 65),
                 ("win_rate", "Win %", 70), ("win_ci", "95% Win CI", 115),
                 ("schedule", "SoS", 75),
-                ("uncertainty", "±", 65), ("status", "Status", 100)]:
+                ("uncertainty", "�", 65), ("status", "Status", 100)]:
             tree.heading(column, text=title)
             tree.column(column, width=width, anchor=tk.CENTER)
         tree.pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
@@ -5554,6 +5611,8 @@ class EuchreGame(tk.Tk):
                 "Hybrid: conservative bid arbitration + Council-guided deep MCTS" if profile == "Iron Oracle" else
                 "Hybrid: Ironclad contract + Council-guided deep MCTS" if profile == "Monte Prime" else
                 "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
+                "Hybrid: Sleuth score-aware policy with selective endgame deepening" if profile == "Iron Endgame Edge" else
+                "Hybrid: Sleuth policy with selective endgame deepening" if profile == "Iron Clutch" else
                 "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
@@ -6066,7 +6125,7 @@ class EuchreGame(tk.Tk):
             })
             self.autoplay_mode = True
             self._refresh_seat_labels()
-            self.autoplay_menu_button.config(text=f"▶ Tournament: {profile_a.get()}")
+            self.autoplay_menu_button.config(text=f"? Tournament: {profile_a.get()}")
             self._record_session_event("tournament_start", self.tournament_state.copy())
             self._close_tool_window("tournament_setup")
             self.show_tournament_dashboard()
@@ -6129,7 +6188,7 @@ class EuchreGame(tk.Tk):
             "0": "Human", "1": game["opponent"],
             "2": state["partner"], "3": game["opponent"],
         })
-        self.autoplay_menu_button.config(text="▶ Autoplay: Off")
+        self.autoplay_menu_button.config(text="? Autoplay: Off")
         self._refresh_seat_labels()
         self._record_session_event("human_league_game_start", {
             "league_id": state["league_id"], "phase": state["phase"],
@@ -6556,7 +6615,7 @@ class EuchreGame(tk.Tk):
         self.autoplay_mode = True
         self._refresh_seat_labels()
         self.autoplay_menu_button.config(
-            text=f"▶ League: {job['profile_a']}")
+            text=f"? League: {job['profile_a']}")
         self._record_session_event(
             "league_job_start", copy.deepcopy(self.tournament_state))
         self._close_tool_window("league_setup")
@@ -6708,7 +6767,7 @@ class EuchreGame(tk.Tk):
             })
             self._refresh_seat_labels()
             self.autoplay_menu_button.config(
-                text=f"▶ League: {tournament['profile_a']}")
+                text=f"? League: {tournament['profile_a']}")
         if tournament.get("randomize_each_game"):
             profile_a, profile_b = random_tournament_matchup(
                 current=(tournament["profile_a"], tournament["profile_b"]))
@@ -6743,7 +6802,7 @@ class EuchreGame(tk.Tk):
             })
             self._refresh_seat_labels()
             self.autoplay_menu_button.config(
-                text=f"▶ Tournament: {profile_a}")
+                text=f"? Tournament: {profile_a}")
         self.start_new_hand()
 
     def _append_tournament_history(self, record):
@@ -7060,9 +7119,9 @@ class EuchreGame(tk.Tk):
         self.info_frame = tk.Frame(self, bg=self.main_bg_color); self.info_frame.pack(side=tk.TOP, pady=5, fill=tk.X)
         self.lbl_trump = tk.Label(self.info_frame, text="TRUMP: Uncalled", font=("Arial", 16, "bold"), bg="white", fg="black", padx=10, pady=5); self.lbl_trump.pack(side=tk.LEFT, padx=10)
 
-        self.btn_main_menu = tk.Button(self.info_frame, text="⌂ Main Menu", font=("Arial", 10, "bold"), bg="#4F6D7A", fg="white", command=self.return_to_main_menu); self.btn_main_menu.pack(side=tk.RIGHT, padx=10)
+        self.btn_main_menu = tk.Button(self.info_frame, text="� Main Menu", font=("Arial", 10, "bold"), bg="#4F6D7A", fg="white", command=self.return_to_main_menu); self.btn_main_menu.pack(side=tk.RIGHT, padx=10)
         ToolTip(self.btn_main_menu, "Abandon this game and return to player, brain, search-depth, and drill setup.")
-        self.btn_stats = tk.Button(self.info_frame, text="📊 Stats & Coach", font=("Arial", 10, "bold"), bg="#1E90FF", fg="white", command=self.show_stats); self.btn_stats.pack(side=tk.RIGHT, padx=10)
+        self.btn_stats = tk.Button(self.info_frame, text="?? Stats & Coach", font=("Arial", 10, "bold"), bg="#1E90FF", fg="white", command=self.show_stats); self.btn_stats.pack(side=tk.RIGHT, padx=10)
         self.tools_menu_button = tk.Menubutton(
             self.info_frame, text="Tools", font=("Arial", 10, "bold"),
             bg="#59636B", fg="white", activebackground="#717D86",
@@ -7127,7 +7186,7 @@ class EuchreGame(tk.Tk):
         self.tools_menu_button.config(menu=tools_menu)
         self.tools_menu_button.pack(side=tk.RIGHT, padx=4)
         self.autoplay_menu_button = tk.Menubutton(
-            self.info_frame, text="▶ Autoplay: Off", font=("Arial", 10, "bold"),
+            self.info_frame, text="? Autoplay: Off", font=("Arial", 10, "bold"),
             bg="#FF8C00", fg="black", activebackground="#FFB347",
             relief=tk.RAISED, direction="below")
         autoplay_menu = tk.Menu(self.autoplay_menu_button, tearoff=False)
@@ -7212,7 +7271,7 @@ class EuchreGame(tk.Tk):
         self.ask_ai_button.config(menu=ask_ai_menu)
         ToolTip(self.ask_ai_button, "Choose any bot to analyze the current bid, discard, or card-play decision.")
         
-        self.show_logic_var = tk.BooleanVar(value=False); self.chk_logic = tk.Checkbutton(self.controls_frame, text="👁️ Show AI Voids", variable=self.show_logic_var, font=("Arial", 10, "bold"), bg=self.main_bg_color, fg="white", selectcolor=self.dark_bg_color, command=self.update_table_graphics)
+        self.show_logic_var = tk.BooleanVar(value=False); self.chk_logic = tk.Checkbutton(self.controls_frame, text="??? Show AI Voids", variable=self.show_logic_var, font=("Arial", 10, "bold"), bg=self.main_bg_color, fg="white", selectcolor=self.dark_bg_color, command=self.update_table_graphics)
         self.bidding_buttons_frame = tk.Frame(self.human_frame, bg=self.main_bg_color); self.bidding_buttons_frame.pack(pady=10)
         self.loner_var = tk.BooleanVar()
 
@@ -7386,7 +7445,7 @@ class EuchreGame(tk.Tk):
                 tooltip_text="Holding the Left Bower too long and being forced to surrender it to the Right Bower.")
         
         tk.Frame(frame, height=2, bg="#FF8C00").pack(fill=tk.X, pady=10)
-        tk.Label(frame, text="🎯 Bidding Coach Analysis", font=("Arial", 14, "bold"), bg=self.coach_bg_color, fg="#FF8C00").pack(anchor="w")
+        tk.Label(frame, text="?? Bidding Coach Analysis", font=("Arial", 14, "bold"), bg=self.coach_bg_color, fg="#FF8C00").pack(anchor="w")
         
         euchre_rate = (stats["got_euchred"] / calls) if calls > 0 else 0.0
         if euchre_rate > 0.20: msg = f"Coach's Note: You are getting euchred on {euchre_rate*100:.1f}% of your calls!"; c_color = "#ff6666" 
@@ -7547,8 +7606,6 @@ class EuchreGame(tk.Tk):
     def _bid_style_margins(self, player_idx, round_num, profile):
         own_score, opponent_score = self._scores_for_player(player_idx)
         score_gap = own_score - opponent_score
-        if profile == "Iron Anchor":
-            return 0.06, 0.03
         if profile == "Iron Sleuth":
             return -0.025, -0.01
         if profile == "Iron Closer":
@@ -7557,6 +7614,14 @@ class EuchreGame(tk.Tk):
             if score_gap <= -2:
                 return 0.05, 0.02
             return 0.01, 0.0
+        if profile == "Iron Clutch":
+            return -0.02, -0.008
+        if profile == "Iron Endgame Edge":
+            if score_gap >= 2 or own_score >= 8:
+                return -0.035, -0.015
+            if score_gap <= -2:
+                return 0.04, 0.015
+            return -0.02, -0.008
         return 0.0, 0.0
 
     def _simulate_cheems_bidding(self, player_idx, round_num, suits_to_check, is_stuck,
@@ -8942,7 +9007,7 @@ class EuchreGame(tk.Tk):
                 discard_idx = self.get_smart_discard_index(0)
                 temp_hand.pop(discard_idx); temp_hand.append(self.up_card)
                 new_pwr, new_desc = self.calculate_hand_power(temp_hand, self.up_card.suit)
-                self.lbl_hand_power.config(text=f"Base Power: {base_pwr:.1f}/10  ➔  With Pickup: {new_pwr:.1f}/10 [{new_desc}]")
+                self.lbl_hand_power.config(text=f"Base Power: {base_pwr:.1f}/10  ?  With Pickup: {new_pwr:.1f}/10 [{new_desc}]")
             else: self.lbl_hand_power.config(text=f"Hand Power (if {self.up_card.suit} called): {base_pwr:.1f}/10 [{base_desc}]")
         elif self.game_state == "bidding_r2":
             best_s = None; best_pwr = -1; best_desc = ""
@@ -9294,6 +9359,9 @@ class EuchreGame(tk.Tk):
             base_iterations = self.table_neural_play_iters
             if prof in {"Monte Prime", "Iron Oracle"}:
                 iterations = max(base_iterations * 3, 600)
+            elif (prof in {"Iron Clutch", "Iron Endgame Edge"}
+                  and self.team1_tricks + self.team2_tricks >= 3):
+                iterations = max(base_iterations * 5, 1000)
             elif (prof == "Iron Solver"
                   and self.team1_tricks + self.team2_tricks >= 3):
                 iterations = max(base_iterations * 6, 1200)
@@ -9475,7 +9543,7 @@ class EuchreGame(tk.Tk):
             for m in self.trainer_mistakes:
                 mf = tk.Frame(scrollable_frame, bg=self.dark_bg_color); mf.pack(fill=tk.X, pady=5)
                 tk.Label(mf, text=m["text"], font=("Arial", 10), bg=self.dark_bg_color, fg="#ffcc00", justify=tk.LEFT, wraplength=400).pack(side=tk.LEFT, padx=10)
-                tk.Button(mf, text="⏪ Rewind Here", font=("Arial", 8, "bold"), bg="#1E90FF", fg="white", command=lambda t=m["trick_num"], d=dialog: self._rewind_to_trick(t, d)).pack(side=tk.RIGHT, padx=10)
+                tk.Button(mf, text="? Rewind Here", font=("Arial", 8, "bold"), bg="#1E90FF", fg="white", command=lambda t=m["trick_num"], d=dialog: self._rewind_to_trick(t, d)).pack(side=tk.RIGHT, padx=10)
         else: tk.Label(frame, text="Flawless Hand! The Grandmaster agreed with all of your decisions.", font=("Arial", 12, "bold"), bg=self.dark_bg_color, fg="lightgreen", wraplength=420, justify=tk.CENTER).pack(pady=40, padx=10)
 
         def next_hand(): dialog.destroy(); self.sandbox_mode = False; self._check_game_over()
@@ -9490,8 +9558,8 @@ class EuchreGame(tk.Tk):
             self.update_scoreboard(); self.start_new_hand()
 
         btn_frame = tk.Frame(dialog, bg=self.coach_bg_color); btn_frame.pack(pady=15)
-        if self.trainer_mistakes: tk.Button(btn_frame, text="🔄 Replay Hand (Sandbox Mode)", font=("Arial", 12, "bold"), bg="#FF8C00", fg="black", command=replay_hand).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Next Hand ➡️", font=("Arial", 12, "bold"), bg="lightgreen", fg="black", command=next_hand).pack(side=tk.LEFT, padx=10)
+        if self.trainer_mistakes: tk.Button(btn_frame, text="?? Replay Hand (Sandbox Mode)", font=("Arial", 12, "bold"), bg="#FF8C00", fg="black", command=replay_hand).pack(side=tk.LEFT, padx=10)
+        tk.Button(btn_frame, text="Next Hand ??", font=("Arial", 12, "bold"), bg="lightgreen", fg="black", command=next_hand).pack(side=tk.LEFT, padx=10)
 
     def _check_game_over(self):
         if self.active_drill != "Standard Match":
@@ -9548,3 +9616,4 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     app = EuchreGame()
     app.mainloop()
+

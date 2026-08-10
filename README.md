@@ -202,13 +202,13 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | The Closer | Routes to Ironclad while leading or near victory, Kyle while trailing, and Arbiter in balanced games. |
 | Unanimous Council | Reinforces moves independently preferred by all three brains and searches more deeply. |
 | Risk Manager | Uses Ironclad evaluations and favors the safer alternative when the top choices are close. |
-| Copycat | Learns from the human's passes, calls, loners, and card aggression, then adopts the nearest trained style. |
 | Wildcard | Randomly selects Arbiter, Ironclad, or Kyle at the start of each hand. |
 | The MC | Pure information-set MCTS without a neural checkpoint. |
 | Iron Monte | Hybrid profile that uses Ironclad for bidding/discard and deep Ironclad-guided MCTS for card play. |
-| Iron Anchor | Applies more conservative bid margins and favors the safer alternative when play choices are close. |
 | Iron Sleuth | Uses Ironclad bidding with a near-tie play preference that preserves trump and information. |
 | Iron Closer | Adjusts Ironclad's bidding and near-tie play choices according to the game score. |
+| Iron Clutch | Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks. |
+| Iron Endgame Edge | Score-tuned endgame variant that combines Iron Clutch selective deepening with aggressive closeout tie-breaks. |
 | Monte Prime | Uses Ironclad for bidding/discard and deeper Council-guided MCTS for card play. |
 | Iron Solver | Uses Ironclad for bidding/discard, then sharply deepens guided search for the final two tricks. |
 | Iron Oracle | Keeps Ironclad's close bid unless a deeper bid search strongly disagrees, then uses Monte Prime play. |
@@ -349,8 +349,7 @@ decision. Stop Autoplay before comparing profiles.
 ### Profile Inspector
 
 Explains each profile's personality and implementation route. It also displays the
-active play, bid, and discard search budgets, current bid margins, and Copycat's
-learned style scores when applicable.
+active play, bid, and discard search budgets, and current bid margins.
 
 Category badges identify base neural brains, ensembles, routers, learners, MCTS
 profiles, and hybrid profiles.
@@ -397,8 +396,8 @@ dealer, and persists independently under the current computer's `node_state` fol
 After the regular season, opponents are seeded by wins against the human team and
 then point differential. The human team plays a best-of-three gauntlet from the
 lowest qualifier through the strongest. Two wins advance; two losses eliminate the
-team. Partner/opponent checkpoint fingerprints, table search budgets, and Copycat
-style are frozen when the season is created. Open **Tools > Human League Season** to
+team. Partner/opponent checkpoint fingerprints and table search budgets are frozen
+when the season is created. Open **Tools > Human League Season** to
 create a season, inspect standings and the playoff path, or resume the next game.
 
 Enable **Fixed-deal benchmark** and provide an integer seed to run a reproducible
@@ -420,8 +419,9 @@ schedule, and selectable head-to-head records.
 **Headless Tournament Lab** launches as a separate process and compares the same
 neural AI profiles available in the main game rather than archived generations.
 The profile dropdown includes the curated main-game roster: Arbiter, Ironclad,
-Kyle, The Closer, Unanimous Council, Risk Manager, Copycat, Wildcard, The MC,
-Iron Monte, Monte Prime, Iron Solver, and Iron Oracle.
+Kyle, The Closer, Unanimous Council, Risk Manager, Wildcard, The MC,
+Iron Monte, Iron Sleuth, Iron Closer, Iron Clutch, Iron Endgame Edge,
+Monte Prime, Iron Solver, and Iron Oracle.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.

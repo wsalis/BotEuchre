@@ -40,6 +40,19 @@ from BotEuchreGUI import (
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
 
+HEADLESS_PROFILE_FALLBACKS = {
+    "Iron Anchor": "Ironclad",
+    "Copycat": "Arbiter",
+    "Sleuth Score Closer": "Iron Clutch",
+    "Sleuth Risk Budget": "Iron Clutch",
+    "Sleuth Endgame Turbo": "Iron Clutch",
+    "Sleuth Turbo Closer": "Iron Endgame Edge",
+}
+
+
+def _normalize_headless_profile(profile_name):
+    return HEADLESS_PROFILE_FALLBACKS.get(profile_name, profile_name)
+
 # ==========================================
 # 1. TENSOR STATE WRAPPER (same shape contract as the self-play scripts)
 # ==========================================
@@ -354,11 +367,14 @@ def generate_deal():
 
 def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
+    profile_name = _normalize_headless_profile(profile_name)
     if profile_name == "Hoyle":
         return "Arbiter"
     if profile_name in {"Iron Monte", "Iron Solver", "Iron Oracle"}:
         return "Ironclad"
-    if profile_name in {"Iron Anchor", "Iron Sleuth", "Iron Closer"}:
+    if profile_name in {
+            "Iron Sleuth", "Iron Closer",
+            "Iron Clutch", "Iron Endgame Edge"}:
         return "Ironclad"
     if profile_name == "Monte Prime":
         return "Ironclad"
@@ -385,10 +401,9 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
 
 def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
                          t1_score, t2_score):
+    profile_name = _normalize_headless_profile(profile_name)
     own_score = t1_score if seat in (0, 2) else t2_score
     opponent_score = t2_score if seat in (0, 2) else t1_score
-    if profile_name == "Iron Anchor":
-        return 0.06, 0.03
     if profile_name == "Iron Sleuth":
         return -0.025, -0.01
     if profile_name == "Iron Closer":
@@ -398,6 +413,15 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
         if score_gap <= -2:
             return 0.05, 0.02
         return 0.01, 0.0
+    if profile_name == "Iron Clutch":
+        return -0.02, -0.008
+    if profile_name == "Iron Endgame Edge":
+        score_gap = own_score - opponent_score
+        if score_gap >= 2 or own_score >= 8:
+            return -0.035, -0.015
+        if score_gap <= -2:
+            return 0.04, 0.015
+        return -0.02, -0.008
     if profile_name != "Scoreboard General":
         return 0.0, 0.0
     score_gap = own_score - opponent_score
@@ -674,6 +698,16 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
                     # Keep Ironclad's contract discipline, then use the Council
                     # ensemble as policy/value guidance for a deeper play search.
                     active_iterations = max(active_iterations * 3, 600)
+                elif active_profile == "Iron Clutch":
+                    completed_tricks = sim.team1_tricks + sim.team2_tricks
+                    active_iterations = max(
+                        active_iterations * (5 if completed_tricks >= 3 else 2),
+                        1000 if completed_tricks >= 3 else 400)
+                elif active_profile == "Iron Endgame Edge":
+                    completed_tricks = sim.team1_tricks + sim.team2_tricks
+                    active_iterations = max(
+                        active_iterations * (5 if completed_tricks >= 3 else 2),
+                        1000 if completed_tricks >= 3 else 400)
                 elif active_profile == "Iron Solver":
                     # Search like Iron Monte early, then spend heavily once only
                     # two tricks remain and the hidden-card space is much smaller.

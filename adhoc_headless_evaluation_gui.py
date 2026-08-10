@@ -676,17 +676,26 @@ class EvalGui(tk.Tk):
                 selected.append("Iron Oracle")
             self.lab_settings["iron_oracle_v1_seen"] = True
         if not self.lab_settings.get("iron_profiles_v1_seen", False):
-            for profile in ("Iron Anchor", "Iron Sleuth", "Iron Closer"):
+            for profile in ("Iron Sleuth", "Iron Closer"):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["iron_profiles_v1_seen"] = True
+        if not self.lab_settings.get("sleuth_variants_v1_seen", False):
+            for profile in (
+                    "Iron Clutch", "Iron Endgame Edge"):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_variants_v1_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
 
     def _recommended_core_profiles(self):
         preferred = [
-            "Ironclad", "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle",
+            "Ironclad", "Iron Sleuth",
+            "Iron Clutch", "Iron Endgame Edge",
+            "Iron Monte",
+            "Monte Prime", "Iron Solver", "Iron Oracle",
             "Risk Manager", "Unanimous Council", "The Closer", "The MC",
             "Arbiter",
         ]
