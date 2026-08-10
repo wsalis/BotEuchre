@@ -190,7 +190,7 @@ and provenance summary.
 
 ## AI Profiles
 
-Bot Euchre currently offers 16 selectable profiles. Profiles can control table
+Bot Euchre currently offers 13 selectable profiles. Profiles can control table
 seats, provide advice through **Ask an AI**, or take over the human seat through
 **Autoplay**.
 
@@ -209,9 +209,6 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | Iron Closer | Score-tuned Ironclad router: opens up while behind, tightens while protecting a lead, and pressures closeout thresholds. |
 | Iron Clutch | Selective deepening specialist: Sleuth-style policy with substantial extra search budget in the final tricks. |
 | Iron Endgame Edge | Score-aware Clutch variant: keeps selective endgame deepening but applies more assertive closeout tie-break behavior. |
-| Monte Prime | Council-guided hybrid: Ironclad contract discipline plus deeper Unanimous Council-guided MCTS during trick play. |
-| Iron Solver | Endgame-heavy hybrid: Ironclad early structure, then the most aggressive late-hand deepening (especially final two tricks). |
-| Iron Oracle | Bid arbitration hybrid: defaults to Ironclad bidding unless deeper bid search strongly disagrees, then plays via Monte Prime. |
 
 ## Playing and Coaching
 
@@ -219,7 +216,7 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 
 Use the **Ask an AI** menu while the human seat has an active bidding, discard, or
 play decision. Any profile can give advice. Neural advisers rank candidate actions,
-while The MC and the four Iron hybrids use information-set search during play.
+while The MC and the three Iron hybrids use information-set search during play.
 
 Each consultation is recorded in the session journal. A progress indicator appears
 while longer searches are running.
@@ -420,8 +417,7 @@ schedule, and selectable head-to-head records.
 neural AI profiles available in the main game rather than archived generations.
 The profile dropdown includes the curated main-game roster: Arbiter, Ironclad,
 Kyle, The Closer, Unanimous Council, Risk Manager, Wildcard, The MC,
-Iron Monte, Iron Sleuth, Iron Closer, Iron Clutch, Iron Endgame Edge,
-Monte Prime, Iron Solver, and Iron Oracle.
+Iron Monte, Iron Sleuth, Iron Closer, Iron Clutch, and Iron Endgame Edge.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.
