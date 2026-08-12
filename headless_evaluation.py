@@ -43,6 +43,11 @@ ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
 HEADLESS_PROFILE_FALLBACKS = {
     "Iron Anchor": "Ironclad",
     "Copycat": "Arbiter",
+    "Iron Sleuth Blitz": "Iron Sleuth Rush",
+    "Iron Sleuth Storm": "Iron Sleuth Tempest",
+    "Iron Sleuth Surge": "Iron Sleuth Tempest",
+    "Iron Sleuth Rush": "Iron Sleuth Tempest",
+    "Iron Sleuth Typhoon": "Iron Sleuth Hurricane",
     "Sleuth Score Closer": "Iron Clutch",
     "Sleuth Risk Budget": "Iron Clutch",
     "Sleuth Endgame Turbo": "Iron Clutch",
@@ -373,8 +378,9 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
     if profile_name in {"Iron Monte", "Iron Solver", "Iron Oracle"}:
         return "Ironclad"
     if profile_name in {
-            "Iron Sleuth", "Iron Closer",
-            "Iron Clutch", "Iron Endgame Edge"}:
+            "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
+            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+            "Iron Closer", "Iron Clutch", "Iron Endgame Edge"}:
         return "Ironclad"
     if profile_name == "Monte Prime":
         return "Ironclad"
@@ -406,6 +412,14 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
     opponent_score = t2_score if seat in (0, 2) else t1_score
     if profile_name == "Iron Sleuth":
         return -0.025, -0.01
+    if profile_name == "Iron Sleuth Tempest":
+        return -0.100, -0.01
+    if profile_name == "Iron Sleuth Hurricane":
+        return -0.130, -0.01
+    if profile_name == "Iron Sleuth Cyclone":
+        return -0.145, -0.01
+    if profile_name == "Iron Sleuth Supercell":
+        return -0.160, -0.01
     if profile_name == "Iron Closer":
         score_gap = own_score - opponent_score
         if score_gap >= 2 or own_score >= 8:

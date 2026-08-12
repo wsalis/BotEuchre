@@ -666,6 +666,9 @@ class EvalGui(tk.Tk):
         if not isinstance(saved, list):
             return list(self.all_profiles)
         selected = [profile for profile in saved if profile in self.all_profiles]
+        selected = [
+            profile for profile in selected
+            if profile not in {"Iron Sleuth Rush", "Iron Sleuth Typhoon"}]
         if not self.lab_settings.get("hybrid_profiles_v1_seen", False):
             for profile in ("Monte Prime", "Iron Solver"):
                 if profile in self.all_profiles and profile not in selected:
@@ -686,6 +689,21 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["sleuth_variants_v1_seen"] = True
+        if not self.lab_settings.get("sleuth_aggressive_v2_seen", False):
+            for profile in ("Iron Sleuth Tempest",):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_aggressive_v2_seen"] = True
+        if not self.lab_settings.get("sleuth_aggressive_v3_seen", False):
+            for profile in ("Iron Sleuth Hurricane",):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_aggressive_v3_seen"] = True
+        if not self.lab_settings.get("sleuth_aggressive_v4_seen", False):
+            for profile in ("Iron Sleuth Cyclone", "Iron Sleuth Supercell"):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_aggressive_v4_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
@@ -693,6 +711,8 @@ class EvalGui(tk.Tk):
     def _recommended_core_profiles(self):
         preferred = [
             "Ironclad", "Iron Sleuth",
+            "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
+            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
             "Iron Clutch", "Iron Endgame Edge",
             "Iron Monte",
             "Monte Prime", "Iron Solver", "Iron Oracle",

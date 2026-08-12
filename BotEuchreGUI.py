@@ -815,6 +815,15 @@ def profile_checkpoint_paths(profile_name):
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Rush": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Blitz": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Storm": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Surge": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Tempest": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Typhoon": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Hurricane": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Cyclone": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Supercell": [IRONCLAD_WEIGHTS_PATH],
         "Iron Closer": [IRONCLAD_WEIGHTS_PATH],
         "Sleuth Score Closer": [IRONCLAD_WEIGHTS_PATH],
         "Iron Clutch": [IRONCLAD_WEIGHTS_PATH],
@@ -1376,6 +1385,10 @@ AI_PROFILE_CHOICES = {
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
+    "Iron Sleuth Tempest (Aggressive Router)": "Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100).",
+    "Iron Sleuth Hurricane (Aggressive Router)": "Iron Sleuth with a maximum test call threshold (call_margin=-0.130).",
+    "Iron Sleuth Cyclone (Aggressive Router)": "Iron Sleuth with a severe call threshold (call_margin=-0.145).",
+    "Iron Sleuth Supercell (Aggressive Router)": "Iron Sleuth with a frontier aggression threshold (call_margin=-0.160).",
     "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
     "Iron Clutch (Selective Deepening)": "Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks.",
     "Iron Endgame Edge (Score-Tuned Endgame)": "Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior.",
@@ -1394,6 +1407,11 @@ LEGACY_PROFILE_FALLBACKS = {
     # Deactivated profiles map to supported equivalents for old saves.
     "Iron Anchor": "Ironclad",
     "Copycat": "Arbiter",
+    "Iron Sleuth Blitz": "Iron Sleuth Rush",
+    "Iron Sleuth Storm": "Iron Sleuth Tempest",
+    "Iron Sleuth Surge": "Iron Sleuth Tempest",
+    "Iron Sleuth Rush": "Iron Sleuth Tempest",
+    "Iron Sleuth Typhoon": "Iron Sleuth Hurricane",
     "Sleuth Score Closer": "Iron Clutch",
     "Sleuth Risk Budget": "Iron Clutch",
     "Sleuth Endgame Turbo": "Iron Clutch",
@@ -1403,8 +1421,10 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
-    "Iron Monte", "Iron Sleuth", "Iron Closer",
-    "Iron Clutch", "Iron Endgame Edge",
+    "Iron Monte", "Iron Sleuth",
+    "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
+    "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+    "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
 HYBRID_MCTS_PROFILES = {
@@ -1427,7 +1447,9 @@ def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
         return None
     if len(ranked_moves) < 2 or ranked_moves[0][1] - ranked_moves[1][1] > tie_margin:
         return ranked_moves[0]
-    if profile == "Iron Sleuth" and sleuth_key is not None:
+    if profile in {
+            "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
+            "Iron Sleuth Cyclone", "Iron Sleuth Supercell"} and sleuth_key is not None:
         return min(ranked_moves[:2], key=sleuth_key)
     if profile == "Iron Closer" and score_gap <= -2:
         return ranked_moves[1]
@@ -1501,6 +1523,9 @@ def load_active_tournament_profiles(default_profiles=None):
         return profiles
     filtered = [
         profile for profile in active_profiles if profile in TOURNAMENT_PROFILES]
+    filtered = [
+        profile for profile in filtered
+        if profile not in {"Iron Sleuth Rush", "Iron Sleuth Typhoon"}]
     if not settings.get("hybrid_profiles_v1_seen", False):
         for profile in ("Monte Prime", "Iron Solver"):
             if profile in profiles and profile not in filtered:
@@ -1515,6 +1540,18 @@ def load_active_tournament_profiles(default_profiles=None):
     if not settings.get("sleuth_variants_v1_seen", False):
         for profile in (
                 "Iron Clutch", "Iron Endgame Edge"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_aggressive_v2_seen", False):
+        for profile in ("Iron Sleuth Tempest",):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_aggressive_v3_seen", False):
+        for profile in ("Iron Sleuth Hurricane",):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_aggressive_v4_seen", False):
+        for profile in ("Iron Sleuth Cyclone", "Iron Sleuth Supercell"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
     if len(filtered) < 2:
@@ -1584,6 +1621,10 @@ PROFILE_CATEGORIES = {
     "Iron Monte": "Hybrid", "Monte Prime": "Hybrid",
     "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
     "Iron Sleuth": "Router",
+    "Iron Sleuth Tempest": "Router",
+    "Iron Sleuth Hurricane": "Router",
+    "Iron Sleuth Cyclone": "Router",
+    "Iron Sleuth Supercell": "Router",
     "Iron Closer": "Router",
     "Iron Clutch": "Hybrid",
     "Iron Endgame Edge": "Hybrid",
@@ -7608,6 +7649,14 @@ class EuchreGame(tk.Tk):
         score_gap = own_score - opponent_score
         if profile == "Iron Sleuth":
             return -0.025, -0.01
+        if profile == "Iron Sleuth Tempest":
+            return -0.100, -0.01
+        if profile == "Iron Sleuth Hurricane":
+            return -0.130, -0.01
+        if profile == "Iron Sleuth Cyclone":
+            return -0.145, -0.01
+        if profile == "Iron Sleuth Supercell":
+            return -0.160, -0.01
         if profile == "Iron Closer":
             if score_gap >= 2 or own_score >= 8:
                 return -0.03, -0.01
