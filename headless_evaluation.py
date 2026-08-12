@@ -35,7 +35,8 @@ from BotEuchreGUI import (
     POLICY_SIZE, BID_PASS, BID_CALL_BASE, BID_ALONE_BASE,
     run_auction, legal_bid_actions, choose_iron_oracle_bid,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
-    run_bid_mcts, choose_iron_profile_move
+    run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
+    is_sleuth_profile
 )
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
@@ -373,15 +374,14 @@ def generate_deal():
 def headless_profile_brain(profile_name, seat, t1_score, t2_score,
                            caller_idx=-1, wildcard_brain=None):
     profile_name = _normalize_headless_profile(profile_name)
+    sleuth_base_profile, _ = parse_sleuth_margin_adjustment(profile_name)
+    if sleuth_base_profile is not None:
+        profile_name = sleuth_base_profile
     if profile_name == "Hoyle":
         return "Arbiter"
     if profile_name in {"Iron Monte", "Iron Solver", "Iron Oracle"}:
         return "Ironclad"
-    if profile_name in {
-            "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
-            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
-            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
-            "Iron Sleuth Cataclysm",
+    if is_sleuth_profile(profile_name) or profile_name in {
             "Iron Closer", "Iron Clutch", "Iron Endgame Edge"}:
         return "Ironclad"
     if profile_name == "Monte Prime":
@@ -410,24 +410,28 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
 def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
                          t1_score, t2_score):
     profile_name = _normalize_headless_profile(profile_name)
+    sleuth_base_profile, sleuth_margin_offset = parse_sleuth_margin_adjustment(
+        profile_name)
+    if sleuth_base_profile is not None:
+        profile_name = sleuth_base_profile
     own_score = t1_score if seat in (0, 2) else t2_score
     opponent_score = t2_score if seat in (0, 2) else t1_score
     if profile_name == "Iron Sleuth":
-        return -0.025, -0.01
+        return -0.025 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Tempest":
-        return -0.100, -0.01
+        return -0.100 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Hurricane":
-        return -0.130, -0.01
+        return -0.130 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Cyclone":
-        return -0.145, -0.01
+        return -0.145 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Supercell":
-        return -0.160, -0.01
+        return -0.160 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Hypercell":
-        return -0.175, -0.01
+        return -0.175 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Firestorm":
-        return -0.190, -0.01
+        return -0.190 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Cataclysm":
-        return -0.205, -0.01
+        return -0.205 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Closer":
         score_gap = own_score - opponent_score
         if score_gap >= 2 or own_score >= 8:

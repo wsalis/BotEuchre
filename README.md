@@ -190,7 +190,7 @@ and provenance summary.
 
 ## AI Profiles
 
-Bot Euchre currently offers 13 selectable profiles. Profiles can control table
+Bot Euchre currently offers 23 selectable profiles. Profiles can control table
 seats, provide advice through **Ask an AI**, or take over the human seat through
 **Autoplay**.
 
@@ -206,9 +206,19 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | The MC | Pure information-set MCTS (no neural checkpoint): strongest for explicit search experimentation and non-neural benchmarks. |
 | Iron Monte | Hybrid: Ironclad for bidding/discard, then deeper Ironclad-guided MCTS for trick play to reduce tactical blind spots. |
 | Iron Sleuth | Probe-first router: Ironclad bidding plus near-tie play rules that preserve flexibility, information, and trump timing. |
+| Iron Sleuth Tempest | Aggressive Sleuth tier 1: materially lower call threshold while keeping loner behavior aligned with the base Sleuth family. |
+| Iron Sleuth Hurricane | Aggressive Sleuth tier 2: stronger pressure profile with deeper thin-hand willingness than Tempest. |
+| Iron Sleuth Cyclone | Aggressive Sleuth tier 3: higher call pressure intended for comeback and tempo testing. |
+| Iron Sleuth Supercell | Aggressive Sleuth tier 4: frontier call pressure used to probe the current aggression sweet spot. |
+| Iron Sleuth Hypercell | Aggressive Sleuth tier 5: post-Supercell extension with even thinner-call tolerance. |
+| Iron Sleuth Firestorm | Aggressive Sleuth tier 6: hyper-aggressive call pressure for edge-of-curve testing. |
+| Iron Sleuth Cataclysm | Aggressive Sleuth tier 7: maximum-pressure Sleuth variant intended for limit-testing. |
 | Iron Closer | Score-tuned Ironclad router: opens up while behind, tightens while protecting a lead, and pressures closeout thresholds. |
 | Iron Clutch | Selective deepening specialist: Sleuth-style policy with substantial extra search budget in the final tricks. |
 | Iron Endgame Edge | Score-aware Clutch variant: keeps selective endgame deepening but applies more assertive closeout tie-break behavior. |
+| Monte Prime | Council-guided hybrid: Ironclad bidding/discard with deeper trick-play search using Unanimous Council guidance. |
+| Iron Solver | Endgame-heavy hybrid: Ironclad bidding/discard, Iron Monte-style early play, then deeper solver-like endgame search. |
+| Iron Oracle | Bid-arbitration hybrid: keeps Ironclad close calls unless deep bid search strongly disagrees, then uses Monte Prime play. |
 
 ## Playing and Coaching
 
@@ -415,9 +425,9 @@ schedule, and selectable head-to-head records.
 
 **Headless Tournament Lab** launches as a separate process and compares the same
 neural AI profiles available in the main game rather than archived generations.
-The profile dropdown includes the curated main-game roster: Arbiter, Ironclad,
-Kyle, The Closer, Unanimous Council, Risk Manager, Wildcard, The MC,
-Iron Monte, Iron Sleuth, Iron Closer, Iron Clutch, and Iron Endgame Edge.
+The profile dropdown mirrors the current main-game roster, including base brains,
+routers, hybrid profiles, and the full aggressive Sleuth ladder through
+Iron Sleuth Cataclysm.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.

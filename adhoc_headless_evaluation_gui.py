@@ -25,6 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 from BotEuchreGUI import (
     DATA_SCHEMA_VERSION, HEADLESS_TOURNAMENT_PROFILES, HELP_TOPICS,
     NODE_ADHOC_HISTORY_PATH, NODE_DEAL_LEDGER_PATH, NODE_ID, NODE_STATE_DIR,
+    SLEUTH_MARGIN_OFFSET_PROFILES,
     atomic_write_json, load_versioned_list, load_versioned_mapping,
     prepare_node_state, save_versioned_list)
 from adhoc_headless_evaluation import planned_paired_deals
@@ -709,6 +710,11 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["sleuth_aggressive_v5_seen"] = True
+        if not self.lab_settings.get("sleuth_aggressive_offsets_v1_seen", False):
+            for profile in SLEUTH_MARGIN_OFFSET_PROFILES:
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_aggressive_offsets_v1_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
@@ -720,6 +726,7 @@ class EvalGui(tk.Tk):
             "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
             "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
             "Iron Sleuth Cataclysm",
+            *SLEUTH_MARGIN_OFFSET_PROFILES,
             "Iron Clutch", "Iron Endgame Edge",
             "Iron Monte",
             "Monte Prime", "Iron Solver", "Iron Oracle",

@@ -802,6 +802,42 @@ def build_provenance_manifest(checkpoint_paths=None, configuration=None,
         "checkpoints": checkpoints,
     }
 
+SLEUTH_ADJUSTABLE_BASE_PROFILES = (
+    "Iron Sleuth",
+    "Iron Sleuth Tempest",
+    "Iron Sleuth Hurricane",
+    "Iron Sleuth Cyclone",
+    "Iron Sleuth Supercell",
+    "Iron Sleuth Hypercell",
+    "Iron Sleuth Firestorm",
+    "Iron Sleuth Cataclysm",
+)
+SLEUTH_MARGIN_OFFSET_VALUES = tuple(step / 100.0 for step in range(10, 101, 10))
+SLEUTH_MARGIN_OFFSET_PROFILES = tuple(
+    f"Iron Sleuth +{offset:.3f}" for offset in SLEUTH_MARGIN_OFFSET_VALUES)
+
+
+def parse_sleuth_margin_adjustment(profile_name):
+    name = str(profile_name or "").strip()
+    for base_profile in sorted(
+            SLEUTH_ADJUSTABLE_BASE_PROFILES, key=len, reverse=True):
+        prefix = f"{base_profile} +"
+        if not name.startswith(prefix):
+            continue
+        try:
+            adjustment = float(name[len(prefix):].strip())
+        except ValueError:
+            return None, 0.0
+        return base_profile, max(0.0, adjustment)
+    return None, 0.0
+
+
+def is_sleuth_profile(profile_name):
+    if profile_name in SLEUTH_ADJUSTABLE_BASE_PROFILES:
+        return True
+    base_profile, _ = parse_sleuth_margin_adjustment(profile_name)
+    return base_profile is not None
+
 def profile_checkpoint_paths(profile_name):
     checkpoint_groups = {
         "Arbiter": [ARBITER_WEIGHTS_PATH],
@@ -842,6 +878,9 @@ def profile_checkpoint_paths(profile_name):
         "Copycat": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Wildcard": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
     }
+    base_profile, _ = parse_sleuth_margin_adjustment(profile_name)
+    if base_profile is not None:
+        return [IRONCLAD_WEIGHTS_PATH]
     return list(checkpoint_groups.get(profile_name, []))
 
 def profile_fingerprints(profile_names):
@@ -1402,6 +1441,12 @@ AI_PROFILE_CHOICES = {
     "Iron Solver (Endgame Hybrid)": "Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks.",
     "Iron Oracle (Bid-Arbitration Hybrid)": "Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play.",
 }
+for offset in SLEUTH_MARGIN_OFFSET_VALUES:
+    profile_name = f"Iron Sleuth +{offset:.3f}"
+    AI_PROFILE_CHOICES[f"{profile_name} (Bid Margin Offset)"] = (
+        "Iron Sleuth with extra call aggression by reducing call_margin by "
+        f"{offset:.3f} from the base Sleuth margin.")
+
 LEGACY_PROFILE_FALLBACKS = {
     "Noob": "Arbiter",
     "Saboteur": "Ironclad",
@@ -1432,6 +1477,7 @@ NEURAL_PROFILES = {
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
     "Iron Sleuth Cataclysm",
+    *SLEUTH_MARGIN_OFFSET_PROFILES,
     "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
@@ -1455,11 +1501,7 @@ def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
         return None
     if len(ranked_moves) < 2 or ranked_moves[0][1] - ranked_moves[1][1] > tie_margin:
         return ranked_moves[0]
-    if profile in {
-            "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
-            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
-            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
-            "Iron Sleuth Cataclysm"} and sleuth_key is not None:
+    if is_sleuth_profile(profile) and sleuth_key is not None:
         return min(ranked_moves[:2], key=sleuth_key)
     if profile == "Iron Closer" and score_gap <= -2:
         return ranked_moves[1]
@@ -1566,6 +1608,10 @@ def load_active_tournament_profiles(default_profiles=None):
                 "Iron Sleuth Hypercell",
                 "Iron Sleuth Firestorm",
                 "Iron Sleuth Cataclysm"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_aggressive_offsets_v1_seen", False):
+        for profile in SLEUTH_MARGIN_OFFSET_PROFILES:
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
     if len(filtered) < 2:
@@ -7664,22 +7710,26 @@ class EuchreGame(tk.Tk):
     def _bid_style_margins(self, player_idx, round_num, profile):
         own_score, opponent_score = self._scores_for_player(player_idx)
         score_gap = own_score - opponent_score
+        sleuth_base_profile, sleuth_margin_offset = parse_sleuth_margin_adjustment(
+            profile)
+        if sleuth_base_profile is not None:
+            profile = sleuth_base_profile
         if profile == "Iron Sleuth":
-            return -0.025, -0.01
+            return -0.025 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Tempest":
-            return -0.100, -0.01
+            return -0.100 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Hurricane":
-            return -0.130, -0.01
+            return -0.130 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Cyclone":
-            return -0.145, -0.01
+            return -0.145 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Supercell":
-            return -0.160, -0.01
+            return -0.160 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Hypercell":
-            return -0.175, -0.01
+            return -0.175 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Firestorm":
-            return -0.190, -0.01
+            return -0.190 - sleuth_margin_offset, -0.01
         if profile == "Iron Sleuth Cataclysm":
-            return -0.205, -0.01
+            return -0.205 - sleuth_margin_offset, -0.01
         if profile == "Iron Closer":
             if score_gap >= 2 or own_score >= 8:
                 return -0.03, -0.01
