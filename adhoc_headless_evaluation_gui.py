@@ -666,9 +666,6 @@ class EvalGui(tk.Tk):
         if not isinstance(saved, list):
             return list(self.all_profiles)
         selected = [profile for profile in saved if profile in self.all_profiles]
-        selected = [
-            profile for profile in selected
-            if profile not in {"Iron Sleuth Rush", "Iron Sleuth Typhoon"}]
         if not self.lab_settings.get("hybrid_profiles_v1_seen", False):
             for profile in ("Monte Prime", "Iron Solver"):
                 if profile in self.all_profiles and profile not in selected:
@@ -704,6 +701,14 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["sleuth_aggressive_v4_seen"] = True
+        if not self.lab_settings.get("sleuth_aggressive_v5_seen", False):
+            for profile in (
+                    "Iron Sleuth Hypercell",
+                    "Iron Sleuth Firestorm",
+                    "Iron Sleuth Cataclysm"):
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["sleuth_aggressive_v5_seen"] = True
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
@@ -713,6 +718,8 @@ class EvalGui(tk.Tk):
             "Ironclad", "Iron Sleuth",
             "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
             "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
+            "Iron Sleuth Cataclysm",
             "Iron Clutch", "Iron Endgame Edge",
             "Iron Monte",
             "Monte Prime", "Iron Solver", "Iron Oracle",

@@ -824,6 +824,9 @@ def profile_checkpoint_paths(profile_name):
         "Iron Sleuth Hurricane": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth Cyclone": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth Supercell": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Hypercell": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Firestorm": [IRONCLAD_WEIGHTS_PATH],
+        "Iron Sleuth Cataclysm": [IRONCLAD_WEIGHTS_PATH],
         "Iron Closer": [IRONCLAD_WEIGHTS_PATH],
         "Sleuth Score Closer": [IRONCLAD_WEIGHTS_PATH],
         "Iron Clutch": [IRONCLAD_WEIGHTS_PATH],
@@ -1389,6 +1392,9 @@ AI_PROFILE_CHOICES = {
     "Iron Sleuth Hurricane (Aggressive Router)": "Iron Sleuth with a maximum test call threshold (call_margin=-0.130).",
     "Iron Sleuth Cyclone (Aggressive Router)": "Iron Sleuth with a severe call threshold (call_margin=-0.145).",
     "Iron Sleuth Supercell (Aggressive Router)": "Iron Sleuth with a frontier aggression threshold (call_margin=-0.160).",
+    "Iron Sleuth Hypercell (Aggressive Router)": "Iron Sleuth with an extreme frontier threshold (call_margin=-0.175).",
+    "Iron Sleuth Firestorm (Aggressive Router)": "Iron Sleuth with a hyper-aggressive threshold (call_margin=-0.190).",
+    "Iron Sleuth Cataclysm (Aggressive Router)": "Iron Sleuth with a max-pressure threshold (call_margin=-0.205).",
     "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
     "Iron Clutch (Selective Deepening)": "Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks.",
     "Iron Endgame Edge (Score-Tuned Endgame)": "Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior.",
@@ -1424,6 +1430,8 @@ NEURAL_PROFILES = {
     "Iron Monte", "Iron Sleuth",
     "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+    "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
+    "Iron Sleuth Cataclysm",
     "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
@@ -1449,7 +1457,9 @@ def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
         return ranked_moves[0]
     if profile in {
             "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
-            "Iron Sleuth Cyclone", "Iron Sleuth Supercell"} and sleuth_key is not None:
+            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
+            "Iron Sleuth Cataclysm"} and sleuth_key is not None:
         return min(ranked_moves[:2], key=sleuth_key)
     if profile == "Iron Closer" and score_gap <= -2:
         return ranked_moves[1]
@@ -1523,9 +1533,6 @@ def load_active_tournament_profiles(default_profiles=None):
         return profiles
     filtered = [
         profile for profile in active_profiles if profile in TOURNAMENT_PROFILES]
-    filtered = [
-        profile for profile in filtered
-        if profile not in {"Iron Sleuth Rush", "Iron Sleuth Typhoon"}]
     if not settings.get("hybrid_profiles_v1_seen", False):
         for profile in ("Monte Prime", "Iron Solver"):
             if profile in profiles and profile not in filtered:
@@ -1552,6 +1559,13 @@ def load_active_tournament_profiles(default_profiles=None):
                 filtered.append(profile)
     if not settings.get("sleuth_aggressive_v4_seen", False):
         for profile in ("Iron Sleuth Cyclone", "Iron Sleuth Supercell"):
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
+    if not settings.get("sleuth_aggressive_v5_seen", False):
+        for profile in (
+                "Iron Sleuth Hypercell",
+                "Iron Sleuth Firestorm",
+                "Iron Sleuth Cataclysm"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
     if len(filtered) < 2:
@@ -1625,6 +1639,9 @@ PROFILE_CATEGORIES = {
     "Iron Sleuth Hurricane": "Router",
     "Iron Sleuth Cyclone": "Router",
     "Iron Sleuth Supercell": "Router",
+    "Iron Sleuth Hypercell": "Router",
+    "Iron Sleuth Firestorm": "Router",
+    "Iron Sleuth Cataclysm": "Router",
     "Iron Closer": "Router",
     "Iron Clutch": "Hybrid",
     "Iron Endgame Edge": "Hybrid",
@@ -7657,6 +7674,12 @@ class EuchreGame(tk.Tk):
             return -0.145, -0.01
         if profile == "Iron Sleuth Supercell":
             return -0.160, -0.01
+        if profile == "Iron Sleuth Hypercell":
+            return -0.175, -0.01
+        if profile == "Iron Sleuth Firestorm":
+            return -0.190, -0.01
+        if profile == "Iron Sleuth Cataclysm":
+            return -0.205, -0.01
         if profile == "Iron Closer":
             if score_gap >= 2 or own_score >= 8:
                 return -0.03, -0.01

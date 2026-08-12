@@ -380,6 +380,8 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
     if profile_name in {
             "Iron Sleuth", "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
             "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
+            "Iron Sleuth Cataclysm",
             "Iron Closer", "Iron Clutch", "Iron Endgame Edge"}:
         return "Ironclad"
     if profile_name == "Monte Prime":
@@ -420,6 +422,12 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
         return -0.145, -0.01
     if profile_name == "Iron Sleuth Supercell":
         return -0.160, -0.01
+    if profile_name == "Iron Sleuth Hypercell":
+        return -0.175, -0.01
+    if profile_name == "Iron Sleuth Firestorm":
+        return -0.190, -0.01
+    if profile_name == "Iron Sleuth Cataclysm":
+        return -0.205, -0.01
     if profile_name == "Iron Closer":
         score_gap = own_score - opponent_score
         if score_gap >= 2 or own_score >= 8:
