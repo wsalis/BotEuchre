@@ -188,43 +188,41 @@ Kyle only underwent a few generations of training. I pulled the plug after a few
 See [README_KYLE.md](README_KYLE.md) for profile notes, checkpoint fingerprint,
 and provenance summary.
 
-## AI Profiles
+## Active Bot Roster
 
-Bot Euchre currently offers 40 selectable profiles. Profiles can control table
-seats, provide advice through **Ask an AI**, or take over the human seat through
-**Autoplay**.
+The public release currently exposes the following active bot roster. Profiles can
+control table seats, provide advice through **Ask an AI**, or take over the human
+seat through **Autoplay**. Legacy aliases and retired experimental profiles are
+intentionally omitted from this public README.
 
-| Profile | Behavior |
-|---|---|
-| Arbiter | Balanced baseline: neutral bid margins, standard neural search depth, and steady all-phase play without strong risk bias. |
-| Ironclad | Conservative baseline: more selective contract style, lower thin-call appetite, and safer average trick lines. |
-| Kyle | Aggressive baseline: calls thinner hands, pushes scoring volatility, and accepts higher euchre risk for upside. |
-| The Closer | Score-aware router: Ironclad while ahead or near game point, Kyle when clearly trailing, Arbiter in neutral spots. |
-| Unanimous Council | Three-brain consensus ensemble: upweights moves independently favored by Arbiter, Ironclad, and Kyle, with deeper search. |
-| Risk Manager | Conservative router on Ironclad: when top options are near-tied, it intentionally selects the lower-variance line. |
-| Wildcard | Hand-level identity randomizer: picks Arbiter, Ironclad, or Kyle once per hand and keeps that style for the full hand. |
-| The MC | Pure information-set MCTS (no neural checkpoint): strongest for explicit search experimentation and non-neural benchmarks. |
-| Iron Monte | Hybrid: Ironclad for bidding/discard, then deeper Ironclad-guided MCTS for trick play to reduce tactical blind spots. |
-| Iron Sleuth | Probe-first router: Ironclad bidding plus near-tie play rules that preserve flexibility, information, and trump timing. |
-| Iron Sleuth Tempest | Aggressive Sleuth tier 1: materially lower call threshold while keeping loner behavior aligned with the base Sleuth family. |
-| Iron Sleuth Hurricane | Aggressive Sleuth tier 2: stronger pressure profile with deeper thin-hand willingness than Tempest. |
-| Iron Sleuth Cyclone | Aggressive Sleuth tier 3: higher call pressure intended for comeback and tempo testing. |
-| Iron Sleuth Supercell | Aggressive Sleuth tier 4: frontier call pressure used to probe the current aggression sweet spot. |
-| Iron Sleuth Hypercell | Aggressive Sleuth tier 5: post-Supercell extension with even thinner-call tolerance. |
-| Iron Sleuth Firestorm | Aggressive Sleuth tier 6: hyper-aggressive call pressure for edge-of-curve testing. |
-| Iron Sleuth Cataclysm | Aggressive Sleuth tier 7: maximum-pressure Sleuth variant intended for limit-testing. |
-| Iron Caller | Finalist Sleuth alias mapped to +0.100 margin offset (balanced pressure/value profile). |
-| Iron Baller | Finalist Sleuth alias mapped to +0.160 margin offset (higher pressure with stronger call volume). |
-| Iron Closer | Score-tuned Ironclad router: opens up while behind, tightens while protecting a lead, and pressures closeout thresholds. |
-| Iron Clutch | Selective deepening specialist: Sleuth-style policy with substantial extra search budget in the final tricks. |
-| Iron Endgame Edge | Score-aware Clutch variant: keeps selective endgame deepening but applies more assertive closeout tie-break behavior. |
-| Monte Prime | Council-guided hybrid: Ironclad bidding/discard with deeper trick-play search using Unanimous Council guidance. |
-| Iron Solver | Endgame-heavy hybrid: Ironclad bidding/discard, Iron Monte-style early play, then deeper solver-like endgame search. |
-| Iron Oracle | Bid-arbitration hybrid: keeps Ironclad close calls unless deep bid search strongly disagrees, then uses Monte Prime play. |
+- Arbiter
+- Ironclad
+- Kyle
+- The Closer
+- Unanimous Council
+- Risk Manager
+- Wildcard
+- The MC
+- Iron Monte
+- Iron Sleuth
+- Iron Sleuth Tempest
+- Iron Sleuth Hurricane
+- Iron Sleuth Cyclone
+- Iron Sleuth Supercell
+- Iron Sleuth Hypercell
+- Iron Sleuth Firestorm
+- Iron Sleuth Cataclysm
+- Iron Caller
+- Iron Baller
+- Iron Closer
+- Iron Clutch
+- Iron Endgame Edge
+- Monte Prime
+- Iron Solver
+- Iron Oracle
 
-In addition to the named profiles above, the roster includes a full
-`Iron Sleuth +0.020` through `Iron Sleuth +0.300` bid-margin offset family
-for controlled aggression frontier testing.
+The adjustable `Iron Sleuth +0.020` through `Iron Sleuth +0.300` family and the
+finalist aliases remain active as variants of the primary Sleuth line.
 
 ## Playing and Coaching
 
