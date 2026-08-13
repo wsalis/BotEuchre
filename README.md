@@ -195,34 +195,36 @@ control table seats, provide advice through **Ask an AI**, or take over the huma
 seat through **Autoplay**. Legacy aliases and retired experimental profiles are
 intentionally omitted from this public README.
 
-- Arbiter
-- Ironclad
-- Kyle
-- The Closer
-- Unanimous Council
-- Risk Manager
-- Wildcard
-- The MC
-- Iron Monte
-- Iron Sleuth
-- Iron Sleuth Tempest
-- Iron Sleuth Hurricane
-- Iron Sleuth Cyclone
-- Iron Sleuth Supercell
-- Iron Sleuth Hypercell
-- Iron Sleuth Firestorm
-- Iron Sleuth Cataclysm
-- Iron Caller
-- Iron Baller
-- Iron Closer
-- Iron Clutch
-- Iron Endgame Edge
-- Monte Prime
-- Iron Solver
-- Iron Oracle
+| Profile | Description |
+|---|---|
+| Arbiter | The balanced Gen50 neural checkpoint with standard AlphaZero search. |
+| Ironclad | The frozen conservative checkpoint, favoring disciplined calls and lower euchre risk. |
+| Kyle | The aggressive checkpoint, willing to call thinner hands and press scoring chances. |
+| The Closer | Uses Ironclad while leading or near victory, Kyle when trailing, and Arbiter in balanced games. |
+| Unanimous Council | Reinforces moves all three neural brains independently favor and doubles ensemble search depth. |
+| Risk Manager | Uses Ironclad evaluations and takes the safer alternative when the top two search choices are nearly tied. |
+| Wildcard | Chooses Arbiter, Ironclad, or Kyle once per hand and keeps that identity for the full hand. |
+| The MC | Uses information-set Monte Carlo tree search without a neural checkpoint. |
+| Iron Monte | Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play. |
+| Iron Sleuth | Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied. |
+| Iron Sleuth Tempest | Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100). |
+| Iron Sleuth Hurricane | Iron Sleuth with a maximum test call threshold (call_margin=-0.130). |
+| Iron Sleuth Cyclone | Iron Sleuth with a severe call threshold (call_margin=-0.145). |
+| Iron Sleuth Supercell | Iron Sleuth with a frontier aggression threshold (call_margin=-0.160). |
+| Iron Sleuth Hypercell | Iron Sleuth with an extreme frontier threshold (call_margin=-0.175). |
+| Iron Sleuth Firestorm | Iron Sleuth with a hyper-aggressive threshold (call_margin=-0.190). |
+| Iron Sleuth Cataclysm | Iron Sleuth with a max-pressure threshold (call_margin=-0.205). |
+| Iron Caller | Iron Sleuth finalist profile mapped to +0.100 bid-margin offset. |
+| Iron Baller | Iron Sleuth finalist profile mapped to +0.160 bid-margin offset. |
+| Iron Closer | Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable. |
+| Iron Clutch | Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks. |
+| Iron Endgame Edge | Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior. |
+| Monte Prime | Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance. |
+| Iron Solver | Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks. |
+| Iron Oracle | Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play. |
 
-The adjustable `Iron Sleuth +0.020` through `Iron Sleuth +0.300` family and the
-finalist aliases remain active as variants of the primary Sleuth line.
+The adjustable `Iron Sleuth +0.020` through `Iron Sleuth +0.300` family provides
+additional variants with controlled bid-margin offsets for aggression frontier testing.
 
 ## Playing and Coaching
 
