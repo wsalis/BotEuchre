@@ -25,7 +25,7 @@ from tkinter import filedialog, messagebox, ttk
 from BotEuchreGUI import (
     DATA_SCHEMA_VERSION, HEADLESS_TOURNAMENT_PROFILES, HELP_TOPICS,
     NODE_ADHOC_HISTORY_PATH, NODE_DEAL_LEDGER_PATH, NODE_ID, NODE_STATE_DIR,
-    SLEUTH_MARGIN_OFFSET_PROFILES,
+    SLEUTH_FINALIST_PROFILES, SLEUTH_MARGIN_OFFSET_PROFILES,
     atomic_write_json, load_versioned_list, load_versioned_mapping,
     prepare_node_state, save_versioned_list)
 from adhoc_headless_evaluation import planned_paired_deals
@@ -715,18 +715,20 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["sleuth_aggressive_offsets_v1_seen"] = True
+        selected = [
+            profile for profile in selected
+            if not str(profile).startswith("Iron Sleuth ")
+            or profile in SLEUTH_FINALIST_PROFILES]
+        for profile in SLEUTH_FINALIST_PROFILES:
+            if profile in self.all_profiles and profile not in selected:
+                selected.append(profile)
         if len(selected) < 2:
             return list(self.all_profiles)
         return selected
 
     def _recommended_core_profiles(self):
         preferred = [
-            "Ironclad", "Iron Sleuth",
-            "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
-            "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
-            "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
-            "Iron Sleuth Cataclysm",
-            *SLEUTH_MARGIN_OFFSET_PROFILES,
+            "Ironclad", *SLEUTH_FINALIST_PROFILES,
             "Iron Clutch", "Iron Endgame Edge",
             "Iron Monte",
             "Monte Prime", "Iron Solver", "Iron Oracle",

@@ -812,13 +812,21 @@ SLEUTH_ADJUSTABLE_BASE_PROFILES = (
     "Iron Sleuth Firestorm",
     "Iron Sleuth Cataclysm",
 )
-SLEUTH_MARGIN_OFFSET_VALUES = tuple(step / 100.0 for step in range(10, 101, 10))
+SLEUTH_FINALIST_ALIASES = {
+    "Iron Caller": "Iron Sleuth +0.100",
+    "Iron Baller": "Iron Sleuth +0.160",
+    "Iron Sleuth Caller": "Iron Sleuth +0.100",
+    "Iron Sleuth Baller": "Iron Sleuth +0.160",
+}
+SLEUTH_FINALIST_PROFILES = ("Iron Caller", "Iron Baller")
+SLEUTH_MARGIN_OFFSET_VALUES = tuple(step / 100.0 for step in range(2, 31, 2))
 SLEUTH_MARGIN_OFFSET_PROFILES = tuple(
     f"Iron Sleuth +{offset:.3f}" for offset in SLEUTH_MARGIN_OFFSET_VALUES)
 
 
 def parse_sleuth_margin_adjustment(profile_name):
     name = str(profile_name or "").strip()
+    name = SLEUTH_FINALIST_ALIASES.get(name, name)
     for base_profile in sorted(
             SLEUTH_ADJUSTABLE_BASE_PROFILES, key=len, reverse=True):
         prefix = f"{base_profile} +"
@@ -1434,6 +1442,8 @@ AI_PROFILE_CHOICES = {
     "Iron Sleuth Hypercell (Aggressive Router)": "Iron Sleuth with an extreme frontier threshold (call_margin=-0.175).",
     "Iron Sleuth Firestorm (Aggressive Router)": "Iron Sleuth with a hyper-aggressive threshold (call_margin=-0.190).",
     "Iron Sleuth Cataclysm (Aggressive Router)": "Iron Sleuth with a max-pressure threshold (call_margin=-0.205).",
+    "Iron Caller (Finalist +0.100)": "Iron Sleuth finalist profile mapped to +0.100 bid-margin offset.",
+    "Iron Baller (Finalist +0.160)": "Iron Sleuth finalist profile mapped to +0.160 bid-margin offset.",
     "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
     "Iron Clutch (Selective Deepening)": "Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks.",
     "Iron Endgame Edge (Score-Tuned Endgame)": "Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior.",
@@ -1467,6 +1477,10 @@ LEGACY_PROFILE_FALLBACKS = {
     "Sleuth Risk Budget": "Iron Clutch",
     "Sleuth Endgame Turbo": "Iron Clutch",
     "Sleuth Turbo Closer": "Iron Endgame Edge",
+    "Iron Sleuth +0.100": "Iron Caller",
+    "Iron Sleuth +0.160": "Iron Baller",
+    "Iron Sleuth Caller": "Iron Caller",
+    "Iron Sleuth Baller": "Iron Baller",
 }
 NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
@@ -1477,6 +1491,7 @@ NEURAL_PROFILES = {
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
     "Iron Sleuth Cataclysm",
+    "Iron Caller", "Iron Baller",
     *SLEUTH_MARGIN_OFFSET_PROFILES,
     "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
@@ -1614,6 +1629,14 @@ def load_active_tournament_profiles(default_profiles=None):
         for profile in SLEUTH_MARGIN_OFFSET_PROFILES:
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
+    allowed_sleuth_profiles = set(SLEUTH_FINALIST_PROFILES)
+    filtered = [
+        profile for profile in filtered
+        if not str(profile).startswith("Iron Sleuth ")
+        or profile in allowed_sleuth_profiles]
+    for profile in SLEUTH_FINALIST_PROFILES:
+        if profile in profiles and profile not in filtered:
+            filtered.append(profile)
     if len(filtered) < 2:
         return profiles
     return filtered

@@ -190,7 +190,7 @@ and provenance summary.
 
 ## AI Profiles
 
-Bot Euchre currently offers 23 selectable profiles. Profiles can control table
+Bot Euchre currently offers 40 selectable profiles. Profiles can control table
 seats, provide advice through **Ask an AI**, or take over the human seat through
 **Autoplay**.
 
@@ -213,12 +213,18 @@ seats, provide advice through **Ask an AI**, or take over the human seat through
 | Iron Sleuth Hypercell | Aggressive Sleuth tier 5: post-Supercell extension with even thinner-call tolerance. |
 | Iron Sleuth Firestorm | Aggressive Sleuth tier 6: hyper-aggressive call pressure for edge-of-curve testing. |
 | Iron Sleuth Cataclysm | Aggressive Sleuth tier 7: maximum-pressure Sleuth variant intended for limit-testing. |
+| Iron Caller | Finalist Sleuth alias mapped to +0.100 margin offset (balanced pressure/value profile). |
+| Iron Baller | Finalist Sleuth alias mapped to +0.160 margin offset (higher pressure with stronger call volume). |
 | Iron Closer | Score-tuned Ironclad router: opens up while behind, tightens while protecting a lead, and pressures closeout thresholds. |
 | Iron Clutch | Selective deepening specialist: Sleuth-style policy with substantial extra search budget in the final tricks. |
 | Iron Endgame Edge | Score-aware Clutch variant: keeps selective endgame deepening but applies more assertive closeout tie-break behavior. |
 | Monte Prime | Council-guided hybrid: Ironclad bidding/discard with deeper trick-play search using Unanimous Council guidance. |
 | Iron Solver | Endgame-heavy hybrid: Ironclad bidding/discard, Iron Monte-style early play, then deeper solver-like endgame search. |
 | Iron Oracle | Bid-arbitration hybrid: keeps Ironclad close calls unless deep bid search strongly disagrees, then uses Monte Prime play. |
+
+In addition to the named profiles above, the roster includes a full
+`Iron Sleuth +0.020` through `Iron Sleuth +0.300` bid-margin offset family
+for controlled aggression frontier testing.
 
 ## Playing and Coaching
 
