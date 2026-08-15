@@ -36,7 +36,8 @@ from BotEuchreGUI import (
     run_auction, legal_bid_actions, choose_iron_oracle_bid,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
-    is_sleuth_profile
+    is_sleuth_profile, IRON_MONTE_SEARCH_PROFILES,
+    iron_monte_play_iterations
 )
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
@@ -379,7 +380,8 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
         profile_name = sleuth_base_profile
     if profile_name == "Hoyle":
         return "Arbiter"
-    if profile_name in {"Iron Monte", "Iron Solver", "Iron Oracle"}:
+    if profile_name in {
+            *IRON_MONTE_SEARCH_PROFILES, "Iron Solver", "Iron Oracle"}:
         return "Ironclad"
     if is_sleuth_profile(profile_name) or profile_name in {
             "Iron Closer", "Iron Clutch", "Iron Endgame Edge"}:
@@ -550,7 +552,7 @@ def _hoyle_discard_index(hand_after_pickup, trump_suit):
 
 def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=None,
                     return_details=False, profiles=("Arbiter", "Arbiter"),
-                    equalize_iterations=False):
+                    equalize_iterations=False, discard_determinizations=24):
     """Plays a pre-generated deal. Team 1 = seats 0/2, Team 2 = seats 1/3.
     net_id 0 = current brain, net_id 1 = baseline brain.
 
@@ -670,6 +672,7 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             ranked_discards = choose_dealer_discard(
                 dealer_hand, trump_suit, caller_idx, is_loner,
                 up_card, dealer_idx, t1_score, t2_score, nn_eval_for(dealer_brain),
+                determinizations=discard_determinizations,
                 known_hands=None,
                 return_ranked=True)
             discard_card = (ranked_discards[-1][0] if dealer_profile == "Saboteur"
@@ -716,10 +719,12 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             chosen_move = sim.get_heuristic_move()
         else:
             if not equalize_iterations:
-                if active_profile == "Iron Monte":
-                    # Iron Monte contract phase is Ironclad, but play phase is
-                    # intentionally a deeper Ironclad-guided MCTS search regime.
-                    active_iterations = max(active_iterations * 2, 400)
+                if active_profile in IRON_MONTE_SEARCH_PROFILES:
+                    # These profiles share the same deeper Ironclad-guided play
+                    # search regime as Iron Monte, with a late-game bump.
+                    active_iterations = iron_monte_play_iterations(
+                        active_iterations,
+                        sim.team1_tricks + sim.team2_tricks)
                 elif active_profile in {"Monte Prime", "Iron Oracle"}:
                     # Keep Ironclad's contract discipline, then use the Council
                     # ensemble as policy/value guidance for a deeper play search.
@@ -855,7 +860,8 @@ def run_gpu_server(nets_by_id, parent_pipes, device, stop_event):
 # ==========================================
 def worker_process_loop(worker_id, gpu_pipe, num_deals_assigned, iterations, results_queue,
                         bid_rollouts=None, seed_base=None, include_details=False,
-                        profiles=("Arbiter", "Arbiter"), equalize_iterations=False):
+                        profiles=("Arbiter", "Arbiter"), equalize_iterations=False,
+                        discard_determinizations=24):
     worker_seed = (
         int(seed_base) + worker_id if seed_base is not None
         else (os.getpid() * int(time.time())) % 123456789)
@@ -877,11 +883,13 @@ def worker_process_loop(worker_id, gpu_pipe, num_deals_assigned, iterations, res
             result_a = play_dealt_hand(
                 deal, gpu_pipe, iterations, current_is_team1=True,
                 bid_rollouts=bid_rollouts, return_details=include_details,
-                profiles=profiles, equalize_iterations=equalize_iterations)
+                profiles=profiles, equalize_iterations=equalize_iterations,
+                discard_determinizations=discard_determinizations)
             result_b = play_dealt_hand(
                 deal, gpu_pipe, iterations, current_is_team1=False,
                 bid_rollouts=bid_rollouts, return_details=include_details,
-                profiles=profiles, equalize_iterations=equalize_iterations)
+                profiles=profiles, equalize_iterations=equalize_iterations,
+                discard_determinizations=discard_determinizations)
             combined = result_a[:5] + result_b[:5]
             if include_details:
                 ledger = {

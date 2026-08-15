@@ -857,6 +857,7 @@ def profile_checkpoint_paths(profile_name):
         "Counterpuncher": [IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Risk Manager": [IRONCLAD_WEIGHTS_PATH],
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
+        "IronChad": [IRONCLAD_WEIGHTS_PATH],
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth Rush": [IRONCLAD_WEIGHTS_PATH],
@@ -1434,6 +1435,7 @@ AI_PROFILE_CHOICES = {
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
+    "IronChad (Deep Ironclad)": "An Ironclad clone using exactly the same deep trick-play search budget as Iron Monte.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
     "Iron Sleuth Tempest (Aggressive Router)": "Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100).",
     "Iron Sleuth Hurricane (Aggressive Router)": "Iron Sleuth with a maximum test call threshold (call_margin=-0.130).",
@@ -1486,7 +1488,7 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
-    "Iron Monte", "Iron Sleuth",
+    "Iron Monte", "IronChad", "Iron Sleuth",
     "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
@@ -1496,8 +1498,20 @@ NEURAL_PROFILES = {
     "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
+IRON_MONTE_SEARCH_PROFILES = {
+    "Iron Monte", "IronChad", "Iron Caller", "Iron Baller"}
+
+
+def iron_monte_play_iterations(base_iterations, completed_tricks):
+    iterations = max(base_iterations * 2, 400)
+    if completed_tricks >= 3:
+        iterations = max(iterations * 2, 800)
+    return iterations
+
+
 HYBRID_MCTS_PROFILES = {
-    "Iron Monte", "Monte Prime", "Iron Solver", "Iron Oracle",
+    *IRON_MONTE_SEARCH_PROFILES,
+    "Monte Prime", "Iron Solver", "Iron Oracle",
     "Iron Clutch", "Iron Endgame Edge"}
 HEADLESS_MCTS_PROFILES = {
     "The MC",
@@ -1594,6 +1608,9 @@ def load_active_tournament_profiles(default_profiles=None):
         for profile in ("Monte Prime", "Iron Solver"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
+    if not settings.get("ironchad_v1_seen", False):
+        if "IronChad" in profiles and "IronChad" not in filtered:
+            filtered.append("IronChad")
     if not settings.get("iron_oracle_v1_seen", False):
         if "Iron Oracle" in profiles and "Iron Oracle" not in filtered:
             filtered.append("Iron Oracle")
@@ -1701,7 +1718,7 @@ PROFILE_CATEGORIES = {
     "Kyle": "Base Neural",
     "Unanimous Council": "Ensemble", "The Closer": "Router",
     "Risk Manager": "Router",
-    "Iron Monte": "Hybrid", "Monte Prime": "Hybrid",
+    "Iron Monte": "Hybrid", "IronChad": "Hybrid", "Monte Prime": "Hybrid",
     "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
     "Iron Sleuth": "Router",
     "Iron Sleuth Tempest": "Router",
@@ -1929,9 +1946,12 @@ HELP_TOPICS = [
         "fair-play neural profile roster plus supported MCTS profiles (The MC).\n\n"
         "Total games is twice the number of paired deals. For each deal, the profiles "
         "play the same cards twice with team ownership swapped. This removes much of "
-        "the luck of a favorable deal. Play iterations and bid rollouts control search "
-        "effort; fair comparisons normally use equal settings. Reproducible seed makes "
-        "the deal sequence repeatable.\n\n"
+        "the luck of a favorable deal. Profile-default compute gives both competitors "
+        "the same base play and bid budgets while preserving built-in deep-search "
+        "multipliers. GUI base compute uses the main Tournament mode's 1200 play, "
+        "800 bid, and 64 discard budgets for closer engine comparisons. Use strict "
+        "iteration equalization only when comparing policies at the same play-search "
+        "budget. Reproducible seed makes the deal sequence repeatable.\n\n"
         "Queue Current stores the current matchup. With Randomize teams checked, each "
         "press draws two different profiles and stores that pair in the queued job. "
         "Queue as many tournaments as desired, then choose Run Queue; jobs run in order "
@@ -3540,6 +3560,10 @@ class ISMCTS_Multiprocessing_Agent:
             elif (profile == "Iron Solver"
                   and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
                 iterations = max(base_iterations * 6, 1200)
+            elif profile in IRON_MONTE_SEARCH_PROFILES:
+                iterations = iron_monte_play_iterations(
+                    base_iterations,
+                    ui_game.team1_tricks + ui_game.team2_tricks)
             else:
                 iterations = max(base_iterations * 2, 400)
             if return_all_moves:
@@ -4180,7 +4204,8 @@ class EuchreGame(tk.Tk):
             return self.unanimous_council_brain
         if profile == "Risk Manager":
             return self.ironclad_brain
-        if profile in {"Iron Monte", "Iron Solver"}:
+        if profile in {
+            *IRON_MONTE_SEARCH_PROFILES, "Iron Solver"}:
             return self.ironclad_brain
         if profile in {
             "Iron Sleuth", "Iron Closer",
@@ -5784,7 +5809,7 @@ class EuchreGame(tk.Tk):
                 "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
                 "Hybrid: Sleuth score-aware policy with selective endgame deepening" if profile == "Iron Endgame Edge" else
                 "Hybrid: Sleuth policy with selective endgame deepening" if profile == "Iron Clutch" else
-                "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
+                "Hybrid: Ironclad contract + guided MCTS play" if profile in {"Iron Monte", "IronChad"} else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
                 f"{profile} checkpoint")
@@ -9677,6 +9702,10 @@ class EuchreGame(tk.Tk):
             elif (prof == "Iron Solver"
                   and self.team1_tricks + self.team2_tricks >= 3):
                 iterations = max(base_iterations * 6, 1200)
+            elif prof in IRON_MONTE_SEARCH_PROFILES:
+                iterations = iron_monte_play_iterations(
+                    base_iterations,
+                    self.team1_tricks + self.team2_tricks)
             else:
                 iterations = max(base_iterations * 2, 400)
             known_hands = self._get_autoplay_known_hands(player_idx)

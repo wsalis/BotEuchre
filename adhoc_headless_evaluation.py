@@ -32,6 +32,34 @@ from BotEuchreGUI import (
     prepare_node_state, profile_checkpoint_paths, profile_fingerprint)
 from headless_evaluation import run_gpu_server, worker_process_loop
 
+DEFAULT_HEADLESS_PLAY_ITERATIONS = 200
+DEFAULT_HEADLESS_BID_ROLLOUTS = 100
+DEFAULT_HEADLESS_DISCARD_DETERMINIZATIONS = 24
+GUI_PLAY_ITERATIONS = 1200
+GUI_BID_ROLLOUTS = 800
+GUI_DISCARD_DETERMINIZATIONS = 64
+
+
+def resolve_compute_settings(args):
+    if args.mcts is not None:
+        args.mcts_a = args.mcts
+        args.mcts_b = args.mcts
+    if args.profile_default_compute:
+        args.mcts_a = DEFAULT_HEADLESS_PLAY_ITERATIONS
+        args.mcts_b = DEFAULT_HEADLESS_PLAY_ITERATIONS
+        args.bid_rollouts_a = DEFAULT_HEADLESS_BID_ROLLOUTS
+        args.bid_rollouts_b = DEFAULT_HEADLESS_BID_ROLLOUTS
+        args.discard_determinizations = DEFAULT_HEADLESS_DISCARD_DETERMINIZATIONS
+        args.equalize_iterations = False
+    if args.gui_base_compute:
+        args.mcts_a = GUI_PLAY_ITERATIONS
+        args.mcts_b = GUI_PLAY_ITERATIONS
+        args.bid_rollouts_a = GUI_BID_ROLLOUTS
+        args.bid_rollouts_b = GUI_BID_ROLLOUTS
+        args.discard_determinizations = GUI_DISCARD_DETERMINIZATIONS
+        args.equalize_iterations = False
+    return args
+
 
 def load_model(path, device, label):
     if not os.path.exists(path):
@@ -109,7 +137,12 @@ def run_match(model_a, model_b, args):
     print(f"[AdHoc Eval] {num_deals} duplicated deals ({total_games} total games), "
           f"play iters A/B={args.mcts_a}/{args.mcts_b}, "
           f"bid rollouts A/B={args.bid_rollouts_a}/{args.bid_rollouts_b}, "
+          f"discard determinizations={args.discard_determinizations}, "
           f"{active_workers} workers, device={device}")
+    if args.gui_base_compute:
+        print("[AdHoc Eval] GUI-base compute: main GUI base budgets with built-in profile depth enabled")
+    elif args.profile_default_compute:
+        print("[AdHoc Eval] Profile-default compute: shared base budgets with built-in profile depth enabled")
     if args.equalize_iterations:
         print("[AdHoc Eval] Equalized play iterations: hybrid profiles will use the same base budget as the others")
 
@@ -132,7 +165,8 @@ def run_match(model_a, model_b, args):
             args=(worker_id, child_pipes[worker_id], count,
                   (args.mcts_a, args.mcts_b), data_queue,
                   (args.bid_rollouts_a, args.bid_rollouts_b), args.seed,
-                bool(args.ledger), (label_a, label_b), args.equalize_iterations))
+                bool(args.ledger), (label_a, label_b),
+                args.equalize_iterations, args.discard_determinizations))
         proc.daemon = True
         proc.start()
         processes.append(proc)
@@ -333,6 +367,11 @@ def run_match(model_a, model_b, args):
         "model_b_mcts_iterations": args.mcts_b,
         "model_a_bid_rollouts": args.bid_rollouts_a,
         "model_b_bid_rollouts": args.bid_rollouts_b,
+        "discard_determinizations": args.discard_determinizations,
+        "compute_mode": (
+            "gui_defaults" if args.gui_base_compute
+            else "profile_defaults" if args.profile_default_compute
+            else "equalized" if args.equalize_iterations else "manual"),
         "model_a_avg_value": round(avg_a, 4),
         "model_b_avg_value": round(avg_b, 4),
         "model_a_win_rate": round(win_rate, 4),
@@ -368,6 +407,11 @@ def run_match(model_a, model_b, args):
                 "mcts_b": args.mcts_b,
                 "bid_rollouts_a": args.bid_rollouts_a,
                 "bid_rollouts_b": args.bid_rollouts_b,
+                "discard_determinizations": args.discard_determinizations,
+                "compute_mode": (
+                    "gui_defaults" if args.gui_base_compute
+                    else "profile_defaults" if args.profile_default_compute
+                    else "equalized" if args.equalize_iterations else "manual"),
                 "worker_multiplier": args.worker_multiplier,
                 "seed": args.seed, "mirrored_deals": True,
                 "early_stop_min_deals": args.early_stop_min_deals,
@@ -401,25 +445,32 @@ def parse_args():
     parser.add_argument("--mcts-b", type=int, default=50, help="Model B play MCTS iterations")
     parser.add_argument("--bid-rollouts-a", type=int, default=0, help="Model A bid MCTS rollouts; 0 uses raw bid-head argmax")
     parser.add_argument("--bid-rollouts-b", type=int, default=0, help="Model B bid MCTS rollouts; 0 uses raw bid-head argmax")
+    parser.add_argument("--discard-determinizations", type=int,
+                        default=DEFAULT_HEADLESS_DISCARD_DETERMINIZATIONS,
+                        help="Shared dealer-discard determinizations")
     parser.add_argument("--worker-multiplier", type=int, default=6, help="CPU worker oversubscription multiplier")
     parser.add_argument("--seed", type=int, default=20260801, help="Deterministic worker/deal seed")
     parser.add_argument("--equalize-iterations", action="store_true",
                         help="Force all profiles to use the same base MCTS iteration budget")
+    parser.add_argument("--profile-default-compute", action="store_true",
+                        help="Use shared default base budgets while preserving each profile's built-in search depth")
+    parser.add_argument("--gui-base-compute", action="store_true",
+                        help="Use the main GUI's 1200/800/64 base compute while preserving built-in profile depth")
     parser.add_argument("--label", default="adhoc_check", help="Label recorded in the log entry")
     parser.add_argument("--log", default=NODE_ADHOC_HISTORY_PATH, help="JSONL log path; use an empty string to skip logging")
     parser.add_argument("--ledger", default=NODE_DEAL_LEDGER_PATH, help="Optional per-deal JSONL ledger path")
     parser.add_argument("--early-stop-min-deals", type=int, default=0,
                         help="Stop when the paired 95%% CI excludes zero after this many deals; 0 disables")
     args = parser.parse_args()
-    if args.mcts is not None:
-        args.mcts_a = args.mcts
-        args.mcts_b = args.mcts
+    resolve_compute_settings(args)
     if args.hands < 1:
         parser.error("--hands must be at least 1")
     if args.mcts_a < 1 or args.mcts_b < 1:
         parser.error("--mcts-a and --mcts-b must be at least 1")
     if args.bid_rollouts_a < 0 or args.bid_rollouts_b < 0:
         parser.error("--bid-rollouts-a and --bid-rollouts-b cannot be negative")
+    if args.discard_determinizations < 1:
+        parser.error("--discard-determinizations must be at least 1")
     if args.worker_multiplier < 1:
         parser.error("--worker-multiplier must be at least 1")
     if args.early_stop_min_deals < 0:

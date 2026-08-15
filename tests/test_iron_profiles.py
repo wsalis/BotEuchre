@@ -5,22 +5,134 @@ from unittest.mock import patch
 from BotEuchreGUI import (
     Card,
     EuchreGame,
+    HYBRID_MCTS_PROFILES,
     _continue_auction_by_policy,
     _format_ai_comparison_row,
     advance_turn_after_play,
     choose_iron_profile_move,
+    iron_monte_play_iterations,
     normalize_profile_name,
     profile_checkpoint_paths,
 )
-from headless_evaluation import headless_bid_margins
+from adhoc_headless_evaluation_gui import EvalGui
+from adhoc_headless_evaluation import (
+    DEFAULT_HEADLESS_BID_ROLLOUTS,
+    DEFAULT_HEADLESS_PLAY_ITERATIONS,
+    GUI_BID_ROLLOUTS,
+    GUI_DISCARD_DETERMINIZATIONS,
+    GUI_PLAY_ITERATIONS,
+    resolve_compute_settings,
+)
+from headless_evaluation import headless_bid_margins, headless_profile_brain
 
 
 class TestIronProfiles(unittest.TestCase):
+    def test_headless_gui_compute_preset_matches_main_gui(self):
+        args = SimpleNamespace(
+            mcts=7, mcts_a=9, mcts_b=11,
+            bid_rollouts_a=13, bid_rollouts_b=15,
+            discard_determinizations=17,
+            profile_default_compute=False,
+            gui_base_compute=True,
+            equalize_iterations=True,
+        )
+
+        resolve_compute_settings(args)
+
+        self.assertEqual((args.mcts_a, args.mcts_b), (1200, 1200))
+        self.assertEqual(
+            (args.bid_rollouts_a, args.bid_rollouts_b), (800, 800))
+        self.assertEqual(args.discard_determinizations, 64)
+        self.assertFalse(args.equalize_iterations)
+        self.assertEqual(GUI_PLAY_ITERATIONS, 1200)
+        self.assertEqual(GUI_BID_ROLLOUTS, 800)
+        self.assertEqual(GUI_DISCARD_DETERMINIZATIONS, 64)
+
+        gui = object.__new__(EvalGui)
+        command = gui.build_command(
+            "Iron Caller", "Iron Baller", 100, 9, 11, 13, 15, 1,
+            "gui_compute", "", gui_base_compute=True)
+        self.assertIn("--gui-base-compute", command)
+
+    def test_headless_profile_default_compute_uses_shared_base(self):
+        gui = object.__new__(EvalGui)
+        command = gui.build_command(
+            "Ironclad", "IronChad", 100, 9, 11, 13, 15, 1,
+            "default_compute", "", profile_default_compute=True)
+
+        self.assertIn("--profile-default-compute", command)
+        self.assertEqual(DEFAULT_HEADLESS_PLAY_ITERATIONS, 200)
+        self.assertEqual(DEFAULT_HEADLESS_BID_ROLLOUTS, 100)
+
+    def test_headless_gui_adds_ironchad_to_saved_active_profiles(self):
+        gui = object.__new__(EvalGui)
+        gui.all_profiles = ["Arbiter", "Ironclad", "IronChad"]
+        gui.lab_settings = {
+            "active_profiles": ["Arbiter", "Ironclad"],
+            "hybrid_profiles_v1_seen": True,
+            "iron_oracle_v1_seen": True,
+            "iron_profiles_v1_seen": True,
+            "sleuth_variants_v1_seen": True,
+            "sleuth_aggressive_v2_seen": True,
+            "sleuth_aggressive_v3_seen": True,
+            "sleuth_aggressive_v4_seen": True,
+            "sleuth_aggressive_v5_seen": True,
+            "sleuth_aggressive_offsets_v1_seen": True,
+        }
+
+        self.assertIn("IronChad", gui._load_active_profiles())
+        self.assertTrue(gui.lab_settings["ironchad_v1_seen"])
+
+    def test_ironchad_matches_iron_monte_search_profile(self):
+        self.assertEqual(normalize_profile_name("IronChad"), "IronChad")
+        self.assertIn("IronChad", HYBRID_MCTS_PROFILES)
+        self.assertEqual(
+            profile_checkpoint_paths("IronChad"),
+            profile_checkpoint_paths("Iron Monte"),
+        )
+        for base_iterations, completed_tricks, expected in (
+                (100, 0, 400), (250, 2, 500),
+                (100, 3, 800), (250, 4, 1000)):
+            self.assertEqual(
+                iron_monte_play_iterations(base_iterations, completed_tricks),
+                expected,
+            )
+
+        game = object.__new__(EuchreGame)
+        game.ai_profiles = {"0": "IronChad"}
+        game.wildcard_hand_profiles = {}
+        game.ironclad_brain = object()
+        game.kyle_brain = object()
+        game.unanimous_council_brain = object()
+        game.cheems_brain = object()
+        game.game_state = "playing"
+        self.assertIs(game._get_neural_brain(0), game.ironclad_brain)
+        self.assertEqual(
+            headless_profile_brain("IronChad", 0, 0, 0),
+            "Ironclad",
+        )
+
     def test_new_profiles_are_normalized(self):
         for profile_name in (
                 "Iron Sleuth", "Iron Closer",
                 "Iron Clutch", "Iron Endgame Edge"):
             self.assertEqual(normalize_profile_name(profile_name), profile_name)
+
+    def test_finalist_iron_profiles_use_hybrid_compute(self):
+        game = object.__new__(EuchreGame)
+        game.ai_profiles = {"0": "Iron Caller"}
+        game.wildcard_hand_profiles = {}
+        game.ironclad_brain = object()
+        game.kyle_brain = object()
+        game.unanimous_council_brain = object()
+        game.cheems_brain = object()
+        game.game_state = "playing"
+        game.team1_score = 0
+        game.team2_score = 0
+        self.assertIs(game._get_neural_brain(0), game.ironclad_brain)
+
+        game.ai_profiles = {"0": "Iron Baller"}
+        self.assertIs(game._get_neural_brain(0), game.ironclad_brain)
 
     def test_deactivated_profiles_fallback_to_supported_profiles(self):
         self.assertEqual(normalize_profile_name("Iron Anchor"), "Ironclad")

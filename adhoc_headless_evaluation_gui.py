@@ -28,7 +28,13 @@ from BotEuchreGUI import (
     SLEUTH_FINALIST_PROFILES, SLEUTH_MARGIN_OFFSET_PROFILES,
     atomic_write_json, load_versioned_list, load_versioned_mapping,
     prepare_node_state, save_versioned_list)
-from adhoc_headless_evaluation import planned_paired_deals
+from adhoc_headless_evaluation import (
+    DEFAULT_HEADLESS_BID_ROLLOUTS,
+    DEFAULT_HEADLESS_PLAY_ITERATIONS,
+    GUI_BID_ROLLOUTS,
+    GUI_PLAY_ITERATIONS,
+    planned_paired_deals,
+)
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -42,6 +48,8 @@ LAB_SETTINGS_PATH = os.path.join(
 LAB_SETTINGS_DEFAULTS = {
     "ledger_path": NODE_DEAL_LEDGER_PATH,
     "early_stop_min_deals": "0",
+    "profile_default_compute": True,
+    "gui_base_compute": False,
     "max_runtime_minutes": "360",
     "stall_minutes": "30",
     "randomize_teams": False,
@@ -49,6 +57,7 @@ LAB_SETTINGS_DEFAULTS = {
     "round_robin_label_prefix": "round_robin",
     "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
     "hybrid_profiles_v1_seen": False,
+    "ironchad_v1_seen": False,
     "iron_oracle_v1_seen": False,
     "iron_profiles_v1_seen": False,
     "shared_queue_enabled": False,
@@ -434,10 +443,10 @@ class EvalGui(tk.Tk):
         self.randomize_teams_var = tk.BooleanVar(
             value=self.lab_settings.get("randomize_teams", False))
         self.hands_var = tk.StringVar(value="1000")
-        self.mcts_a_var = tk.StringVar(value="200")
-        self.mcts_b_var = tk.StringVar(value="200")
-        self.bid_a_var = tk.StringVar(value="100")
-        self.bid_b_var = tk.StringVar(value="100")
+        self.mcts_a_var = tk.StringVar(value=str(DEFAULT_HEADLESS_PLAY_ITERATIONS))
+        self.mcts_b_var = tk.StringVar(value=str(DEFAULT_HEADLESS_PLAY_ITERATIONS))
+        self.bid_a_var = tk.StringVar(value=str(DEFAULT_HEADLESS_BID_ROLLOUTS))
+        self.bid_b_var = tk.StringVar(value=str(DEFAULT_HEADLESS_BID_ROLLOUTS))
         self.worker_multiplier_var = tk.StringVar(value="6")
         self.seed_var = tk.StringVar(value="20260801")
         self.label_var = tk.StringVar(value="mac_adhoc")
@@ -456,6 +465,10 @@ class EvalGui(tk.Tk):
             value=bool(self.lab_settings.get("shared_queue_enabled", False)))
         self.equalize_iterations_var = tk.BooleanVar(
             value=str(self.lab_settings.get("equalize_iterations", "False")).lower() == "true")
+        self.profile_default_compute_var = tk.BooleanVar(
+            value=bool(self.lab_settings.get("profile_default_compute", True)))
+        self.gui_base_compute_var = tk.BooleanVar(
+            value=bool(self.lab_settings.get("gui_base_compute", False)))
         self.shared_queue_path_var = tk.StringVar(
             value=self.lab_settings.get(
                 "shared_queue_path",
@@ -672,6 +685,10 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["hybrid_profiles_v1_seen"] = True
+        if not self.lab_settings.get("ironchad_v1_seen", False):
+            if "IronChad" in self.all_profiles and "IronChad" not in selected:
+                selected.append("IronChad")
+            self.lab_settings["ironchad_v1_seen"] = True
         if not self.lab_settings.get("iron_oracle_v1_seen", False):
             if "Iron Oracle" in self.all_profiles and "Iron Oracle" not in selected:
                 selected.append("Iron Oracle")
@@ -730,7 +747,7 @@ class EvalGui(tk.Tk):
         preferred = [
             "Ironclad", *SLEUTH_FINALIST_PROFILES,
             "Iron Clutch", "Iron Endgame Edge",
-            "Iron Monte",
+            "Iron Monte", "IronChad",
             "Monte Prime", "Iron Solver", "Iron Oracle",
             "Risk Manager", "Unanimous Council", "The Closer", "The MC",
             "Arbiter",
@@ -1058,14 +1075,31 @@ class EvalGui(tk.Tk):
                 row=5, column=3, sticky="e", pady=4)
 
         ttk.Label(controls, text="Play MCTS iterations").grid(row=3, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(controls, textvariable=self.mcts_a_var, width=12).grid(row=3, column=1, sticky="w", pady=4)
+        self.mcts_a_entry = ttk.Entry(controls, textvariable=self.mcts_a_var, width=12)
+        self.mcts_a_entry.grid(row=3, column=1, sticky="w", pady=4)
         ttk.Label(controls, text="Play MCTS iterations").grid(row=3, column=2, sticky="w", padx=(24, 8), pady=4)
-        ttk.Entry(controls, textvariable=self.mcts_b_var, width=12).grid(row=3, column=3, sticky="w", pady=4)
+        self.mcts_b_entry = ttk.Entry(controls, textvariable=self.mcts_b_var, width=12)
+        self.mcts_b_entry.grid(row=3, column=3, sticky="w", pady=4)
 
         ttk.Label(controls, text="Bid rollouts / suit sims").grid(row=4, column=0, sticky="w", padx=(0, 8), pady=4)
-        ttk.Entry(controls, textvariable=self.bid_a_var, width=12).grid(row=4, column=1, sticky="w", pady=4)
+        self.bid_a_entry = ttk.Entry(controls, textvariable=self.bid_a_var, width=12)
+        self.bid_a_entry.grid(row=4, column=1, sticky="w", pady=4)
         ttk.Label(controls, text="Bid rollouts / suit sims").grid(row=4, column=2, sticky="w", padx=(24, 8), pady=4)
-        ttk.Entry(controls, textvariable=self.bid_b_var, width=12).grid(row=4, column=3, sticky="w", pady=4)
+        self.bid_b_entry = ttk.Entry(controls, textvariable=self.bid_b_var, width=12)
+        self.bid_b_entry.grid(row=4, column=3, sticky="w", pady=4)
+
+        ttk.Checkbutton(
+            controls,
+            text="Use headless defaults (200 play / 100 bid + built-in depth)",
+            variable=self.profile_default_compute_var,
+            command=lambda: self._on_compute_mode_change("headless")).grid(
+                row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
+        ttk.Checkbutton(
+            controls,
+            text="Use GUI base compute (1200 play / 800 bid / 64 discard + built-in depth)",
+            variable=self.gui_base_compute_var,
+            command=lambda: self._on_compute_mode_change("gui")).grid(
+                row=7, column=0, columnspan=4, sticky="w", pady=(2, 2))
 
         runtime = ttk.LabelFrame(outer, text="Run Settings", padding=12)
         runtime.pack(fill=tk.X, pady=(10, 0))
@@ -1121,10 +1155,11 @@ class EvalGui(tk.Tk):
         ttk.Label(watchdog, text=" / ").pack(side=tk.LEFT)
         ttk.Entry(watchdog, textvariable=self.stall_minutes_var, width=8).pack(side=tk.LEFT)
 
-        ttk.Checkbutton(
+        self.equalize_iterations_check = ttk.Checkbutton(
             runtime, text="Equalize play iterations across profiles",
-            variable=self.equalize_iterations_var).grid(
-                row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
+            variable=self.equalize_iterations_var)
+        self.equalize_iterations_check.grid(
+            row=6, column=0, columnspan=4, sticky="w", pady=(6, 2))
         ttk.Checkbutton(
             runtime, text="Use shared SQLite queue (cluster mode)",
             variable=self.shared_queue_enabled_var,
@@ -1204,6 +1239,35 @@ class EvalGui(tk.Tk):
         scrollbar = ttk.Scrollbar(output_frame, command=self.output_text.yview)
         scrollbar.grid(row=0, column=1, sticky="ns")
         self.output_text.configure(yscrollcommand=scrollbar.set)
+        self._on_compute_mode_change()
+
+    def _on_compute_mode_change(self, changed=None):
+        if changed == "gui" and self.gui_base_compute_var.get():
+            self.profile_default_compute_var.set(False)
+        elif changed == "headless" and self.profile_default_compute_var.get():
+            self.gui_base_compute_var.set(False)
+        use_gui_defaults = bool(self.gui_base_compute_var.get())
+        use_defaults = bool(self.profile_default_compute_var.get())
+        if use_gui_defaults:
+            self.mcts_a_var.set(str(GUI_PLAY_ITERATIONS))
+            self.mcts_b_var.set(str(GUI_PLAY_ITERATIONS))
+            self.bid_a_var.set(str(GUI_BID_ROLLOUTS))
+            self.bid_b_var.set(str(GUI_BID_ROLLOUTS))
+            self.equalize_iterations_var.set(False)
+        elif use_defaults:
+            self.mcts_a_var.set(str(DEFAULT_HEADLESS_PLAY_ITERATIONS))
+            self.mcts_b_var.set(str(DEFAULT_HEADLESS_PLAY_ITERATIONS))
+            self.bid_a_var.set(str(DEFAULT_HEADLESS_BID_ROLLOUTS))
+            self.bid_b_var.set(str(DEFAULT_HEADLESS_BID_ROLLOUTS))
+            self.equalize_iterations_var.set(False)
+        entry_state = tk.DISABLED if use_defaults or use_gui_defaults else tk.NORMAL
+        for entry in (
+                self.mcts_a_entry, self.mcts_b_entry,
+                self.bid_a_entry, self.bid_b_entry):
+            entry.config(state=entry_state)
+        self.equalize_iterations_check.config(
+            state=(tk.DISABLED if use_defaults or use_gui_defaults
+                   else tk.NORMAL))
 
     def browse_log(self):
         path = filedialog.asksaveasfilename(
@@ -1390,6 +1454,8 @@ class EvalGui(tk.Tk):
             "ledger_path": self.ledger_var.get().strip(),
             "early_stop_min_deals": self.early_stop_var.get().strip(),
             "equalize_iterations": str(bool(self.equalize_iterations_var.get())),
+            "profile_default_compute": bool(self.profile_default_compute_var.get()),
+            "gui_base_compute": bool(self.gui_base_compute_var.get()),
             "max_runtime_minutes": self.max_runtime_var.get().strip(),
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
@@ -1442,10 +1508,17 @@ class EvalGui(tk.Tk):
             model_a, model_b, hands, mcts_a, mcts_b, bid_a, bid_b,
             worker_multiplier, label, log_path, seed,
             self.ledger_var.get().strip(), early_stop,
-            self.equalize_iterations_var.get())
+            self.equalize_iterations_var.get(),
+            self.profile_default_compute_var.get(),
+            self.gui_base_compute_var.get())
         self.save_runtime_preferences()
 
-        self.append_output(f"\n[GUI] Team 1: {model_a} | play={mcts_a} | bid={bid_a}\n")
+        compute_mode = (
+            "GUI defaults" if self.gui_base_compute_var.get()
+            else "headless defaults" if self.profile_default_compute_var.get()
+            else "equalized" if self.equalize_iterations_var.get() else "manual")
+        self.append_output(f"\n[GUI] Compute mode: {compute_mode}\n")
+        self.append_output(f"[GUI] Team 1: {model_a} | play={mcts_a} | bid={bid_a}\n")
         self.append_output(f"[GUI] Team 2: {model_b} | play={mcts_b} | bid={bid_b}\n")
 
         self.append_output("$ " + " ".join(command) + "\n")
@@ -1470,7 +1543,9 @@ class EvalGui(tk.Tk):
             model_a, model_b, hands, mcts_a, mcts_b, bid_a, bid_b,
             worker_multiplier, label, self.log_var.get().strip(), seed,
             self.ledger_var.get().strip(), early_stop,
-            self.equalize_iterations_var.get())
+            self.equalize_iterations_var.get(),
+            self.profile_default_compute_var.get(),
+            self.gui_base_compute_var.get())
         return command, label, f"{model_a} vs {model_b}"
 
     def selected_competitors(self):
@@ -1543,7 +1618,9 @@ class EvalGui(tk.Tk):
                 model_a, model_b, hands, mcts_a, mcts_b,
                 bid_a, bid_b, worker_multiplier, pair_label, log_path,
                 pair_seed, ledger_path, early_stop,
-                self.equalize_iterations_var.get())
+                self.equalize_iterations_var.get(),
+                self.profile_default_compute_var.get(),
+                self.gui_base_compute_var.get())
             new_jobs.append({
                 "id": uuid.uuid4().hex,
                 "status": "queued",
@@ -1733,7 +1810,9 @@ class EvalGui(tk.Tk):
                       bid_a, bid_b, worker_multiplier, label, log_path,
                       seed=20260801,
                       ledger_path="", early_stop_min_deals=0,
-                      equalize_iterations=False):
+                      equalize_iterations=False,
+                      profile_default_compute=False,
+                      gui_base_compute=False):
         command = [
             sys.executable, "-u", NEURAL_SCRIPT, model_a, model_b,
             "--hands", str(hands),
@@ -1749,6 +1828,10 @@ class EvalGui(tk.Tk):
                 "--early-stop-min-deals", str(early_stop_min_deals)])
         if equalize_iterations:
             command.append("--equalize-iterations")
+        if profile_default_compute:
+            command.append("--profile-default-compute")
+        if gui_base_compute:
+            command.append("--gui-base-compute")
         return command
 
     def read_positive_int(self, raw_value, field_name):
