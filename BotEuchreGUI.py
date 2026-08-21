@@ -857,6 +857,7 @@ def profile_checkpoint_paths(profile_name):
         "Counterpuncher": [IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Risk Manager": [IRONCLAD_WEIGHTS_PATH],
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
+        "Omega Iron Monte": [IRONCLAD_WEIGHTS_PATH],
         "IronChad": [IRONCLAD_WEIGHTS_PATH],
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
@@ -1435,6 +1436,7 @@ AI_PROFILE_CHOICES = {
     "Wildcard (Random Neural Per Hand)": "Chooses Vanilla, Ironclad, or Kyle once per hand and keeps that identity for the full hand.",
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
+    "Omega Iron Monte (Peak Hybrid)": "A tuned Iron Monte variant that deepens midgame and endgame search while staying fast enough for live play.",
     "IronChad (Deep Ironclad)": "An Ironclad clone using exactly the same deep trick-play search budget as Iron Monte.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
     "Iron Sleuth Tempest (Aggressive Router)": "Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100).",
@@ -1488,7 +1490,7 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
-    "Iron Monte", "IronChad", "Iron Sleuth",
+    "Iron Monte", "Omega Iron Monte", "IronChad", "Iron Sleuth",
     "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
@@ -1499,7 +1501,7 @@ NEURAL_PROFILES = {
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
 IRON_MONTE_SEARCH_PROFILES = {
-    "Iron Monte", "IronChad", "Iron Caller", "Iron Baller"}
+    "Iron Monte", "IronChad", "Iron Caller", "Iron Baller", "Omega Iron Monte"}
 
 
 def iron_monte_play_iterations(base_iterations, completed_tricks):
@@ -1507,6 +1509,19 @@ def iron_monte_play_iterations(base_iterations, completed_tricks):
     if completed_tricks >= 3:
         iterations = max(iterations * 2, 800)
     return iterations
+
+
+def omega_iron_monte_play_iterations(base_iterations, completed_tricks):
+    iterations = max(base_iterations * 3, 600)
+    if completed_tricks >= 2:
+        iterations = max(iterations * 2, 1800)
+    if completed_tricks >= 4:
+        iterations = max(iterations * 2, 3600)
+    return min(iterations, 7000)
+
+
+# Keep Omega Iron Monte stronger than the stock profile but bounded so it stays
+# responsive in live play rather than degenerating into a 30-second think.
 
 
 HYBRID_MCTS_PROFILES = {
@@ -1611,6 +1626,9 @@ def load_active_tournament_profiles(default_profiles=None):
     if not settings.get("ironchad_v1_seen", False):
         if "IronChad" in profiles and "IronChad" not in filtered:
             filtered.append("IronChad")
+    if not settings.get("omega_iron_monte_v1_seen", False):
+        if "Omega Iron Monte" in profiles and "Omega Iron Monte" not in filtered:
+            filtered.append("Omega Iron Monte")
     if not settings.get("iron_oracle_v1_seen", False):
         if "Iron Oracle" in profiles and "Iron Oracle" not in filtered:
             filtered.append("Iron Oracle")
@@ -1718,7 +1736,8 @@ PROFILE_CATEGORIES = {
     "Kyle": "Base Neural",
     "Unanimous Council": "Ensemble", "The Closer": "Router",
     "Risk Manager": "Router",
-    "Iron Monte": "Hybrid", "IronChad": "Hybrid", "Monte Prime": "Hybrid",
+    "Iron Monte": "Hybrid", "Omega Iron Monte": "Hybrid",
+    "IronChad": "Hybrid", "Monte Prime": "Hybrid",
     "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
     "Iron Sleuth": "Router",
     "Iron Sleuth Tempest": "Router",
@@ -2721,8 +2740,8 @@ class ToolTip:
         self.tipwindow = None
         self.id = None
         self.x = self.y = 0
-        self.widget.bind("<Enter>", self.enter)
-        self.widget.bind("<Leave>", self.leave)
+        self.widget.bind("<Enter>", self.enter, add="+")
+        self.widget.bind("<Leave>", self.leave, add="+")
 
     def enter(self, event=None):
         self.schedule()
@@ -2822,6 +2841,7 @@ class StatsTracker:
 class SettingsStore:
     DEFAULTS = {
         "player_name": "You", "trainer_mode": False, "dark_mode": True,
+        "mute_card_sounds": False,
         "hint_search": "Balanced", "table_search": "Balanced",
         "engine_speed": "Grandmaster (100,000 Iterations)",
         "drill": "Standard Match",
@@ -2830,6 +2850,7 @@ class SettingsStore:
         "large_cards": False, "high_contrast": False,
         "reduced_motion": False, "presets": {},
         "elo_season_id": "legacy", "elo_season_name": "Legacy",
+        "window_geometry": None, "sound_variety": True,
     }
 
     def __init__(self, filename=SETTINGS_PATH):
@@ -2910,25 +2931,70 @@ class SessionJournal:
                 output_file.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 class SoundFX:
+    _muted = False
+    _variety_enabled = True
+
+    @classmethod
+    def set_muted(cls, muted):
+        cls._muted = bool(muted)
+
+    @classmethod
+    def set_variety_enabled(cls, enabled):
+        cls._variety_enabled = bool(enabled)
+
+    @classmethod
+    def _play_if_enabled(cls, callback):
+        if cls._muted or not IS_WINDOWS:
+            return
+        threading.Thread(target=callback, daemon=True).start()
+
     @staticmethod
     def play_card():
-        if IS_WINDOWS: threading.Thread(target=winsound.Beep, args=(800, 50), daemon=True).start()
+        SoundFX._play_if_enabled(lambda: winsound.Beep(800, 50))
+
     @staticmethod
-    def trick_won():
-        if IS_WINDOWS: threading.Thread(target=winsound.Beep, args=(500, 100), daemon=True).start()
+    def trick_won(team_won=True):
+        def sound_routine():
+            if SoundFX._variety_enabled:
+                winsound.Beep(650, 100) if team_won else winsound.Beep(420, 100)
+            else:
+                winsound.Beep(500, 100)
+        SoundFX._play_if_enabled(sound_routine)
+
+    @staticmethod
+    def call_trump():
+        def sound_routine():
+            if SoundFX._variety_enabled:
+                winsound.Beep(520, 80); winsound.Beep(720, 150)
+            else:
+                winsound.Beep(600, 100)
+        SoundFX._play_if_enabled(sound_routine)
+
+    @staticmethod
+    def deal_cards():
+        def sound_routine():
+            if not SoundFX._variety_enabled:
+                return
+            for step in range(5):
+                winsound.Beep(320 + step * 40, 35)
+        SoundFX._play_if_enabled(sound_routine)
+
     @staticmethod
     def round_win(points):
-        if not IS_WINDOWS: return
         def sound_routine():
-            if points == 1: winsound.Beep(400, 100); winsound.Beep(600, 250) 
-            elif points == 2: winsound.Beep(400, 100); winsound.Beep(600, 100); winsound.Beep(800, 300) 
-            elif points >= 4: winsound.Beep(400, 100); winsound.Beep(500, 100); winsound.Beep(600, 100); winsound.Beep(800, 400) 
-        threading.Thread(target=sound_routine, daemon=True).start()
+            if points == 1:
+                winsound.Beep(400, 100); winsound.Beep(600, 250)
+            elif points == 2:
+                winsound.Beep(400, 100); winsound.Beep(600, 100); winsound.Beep(800, 300)
+            elif points >= 4:
+                winsound.Beep(400, 100); winsound.Beep(500, 100); winsound.Beep(600, 100); winsound.Beep(800, 400)
+        SoundFX._play_if_enabled(sound_routine)
+
     @staticmethod
     def round_lose():
-        if not IS_WINDOWS: return
-        def sound_routine(): winsound.Beep(300, 300); winsound.Beep(200, 500) 
-        threading.Thread(target=sound_routine, daemon=True).start()
+        def sound_routine():
+            winsound.Beep(300, 300); winsound.Beep(200, 500)
+        SoundFX._play_if_enabled(sound_routine)
 
 PLAYER_NAMES = {0: "You", 1: "Wildcard", 2: "The MC", 3: "Kyle"}
 
@@ -3560,6 +3626,10 @@ class ISMCTS_Multiprocessing_Agent:
             elif (profile == "Iron Solver"
                   and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
                 iterations = max(base_iterations * 6, 1200)
+            elif profile == "Omega Iron Monte":
+                iterations = omega_iron_monte_play_iterations(
+                    base_iterations,
+                    ui_game.team1_tricks + ui_game.team2_tricks)
             elif profile in IRON_MONTE_SEARCH_PROFILES:
                 iterations = iron_monte_play_iterations(
                     base_iterations,
@@ -3631,7 +3701,6 @@ class EuchreGame(tk.Tk):
         super().__init__()
         prepare_node_state()
         self.title("Bot Euchre")
-        self.geometry("1400x900") 
         
         self.main_bg_color = "#2E8B57"
         self.dark_bg_color = "#1a5934" 
@@ -3642,6 +3711,7 @@ class EuchreGame(tk.Tk):
         self.ai_model = None  
         self.stats_tracker = StatsTracker()
         self.settings_store = SettingsStore()
+        self._apply_startup_geometry()
         self.session_journal = SessionJournal()
         self.tournament_state = None
         try:
@@ -3691,6 +3761,9 @@ class EuchreGame(tk.Tk):
         self.dealer_idx = random.randint(0, 3) 
         self.caller_idx = -1; self.is_loner = False; self.loner_partner_idx = -1 
         self.played_card_labels = [] 
+        self.played_card_label_by_seat = {}
+        self._turn_pulse_seat = None
+        self._turn_pulse_token = 0
         
         self.voids = {0: set(), 1: set(), 2: set(), 3: set()}
         self.bidding_player = 0; self.passed_count = 0; self.autoplay_mode = False
@@ -3729,6 +3802,8 @@ class EuchreGame(tk.Tk):
     def _configure_runtime_from_settings(self):
         global PLAYER_NAMES
         settings = self.settings_store.data
+        SoundFX.set_muted(settings.get("mute_card_sounds", False))
+        SoundFX.set_variety_enabled(settings.get("sound_variety", True))
         PLAYER_NAMES[0] = settings.get("player_name", "You") or "You"
         self.trainer_mode_var = tk.BooleanVar(
             value=bool(settings.get("trainer_mode", False)))
@@ -4698,6 +4773,10 @@ class EuchreGame(tk.Tk):
             value=bool(self.settings_store.data.get("dark_mode", True)))
         make_setup_checkbutton("Enable Dark Mode (UI Theme)", self.dark_mode_var)
 
+        self.mute_card_sounds_var = tk.BooleanVar(
+            value=bool(self.settings_store.data.get("mute_card_sounds", False)))
+        make_setup_checkbutton("Mute Card Play Sounds", self.mute_card_sounds_var)
+
         neural_options = list(NEURAL_SEARCH_PRESETS)
         tk.Label(dialog, text="Hint & Autoplay Neural Search:", font=("Arial", 12, "bold"), bg=setup_bg, fg=setup_text).pack(pady=(10, 0))
         self.hint_search_var = tk.StringVar(
@@ -4757,6 +4836,7 @@ class EuchreGame(tk.Tk):
                 "player_name": ent_human.get().strip() or "You",
                 "trainer_mode": self.trainer_mode_var.get(),
                 "dark_mode": self.dark_mode_var.get(),
+                "mute_card_sounds": self.mute_card_sounds_var.get(),
                 "hint_search": self.hint_search_var.get(),
                 "table_search": self.table_search_var.get(),
                 "engine_speed": self.engine_speed_var.get(),
@@ -4773,6 +4853,7 @@ class EuchreGame(tk.Tk):
             ent_human.insert(0, preset.get("player_name", "You"))
             self.trainer_mode_var.set(preset.get("trainer_mode", False))
             self.dark_mode_var.set(preset.get("dark_mode", True))
+            self.mute_card_sounds_var.set(preset.get("mute_card_sounds", False))
             self.hint_search_var.set(preset.get("hint_search", "Balanced"))
             self.table_search_var.set(preset.get("table_search", "Balanced"))
             self.engine_speed_var.set(preset.get(
@@ -4794,11 +4875,12 @@ class EuchreGame(tk.Tk):
                     "Preset Saved", f"Saved preset '{name.strip()}'.",
                     parent=dialog)
 
-        tk.Button(
+        save_preset_btn = tk.Button(
             preset_frame, text="Save Preset", command=save_preset,
             bg=setup_field, fg=setup_text, activebackground="#3A433D",
-            activeforeground="white", relief=tk.FLAT, padx=8).pack(
-                side=tk.LEFT, padx=4)
+            activeforeground="white", relief=tk.FLAT, padx=8)
+        save_preset_btn.pack(side=tk.LEFT, padx=4)
+        self._add_hover_glow(save_preset_btn, glow_color=setup_accent)
             
         def submit_names(event=None):
             global PLAYER_NAMES
@@ -4821,7 +4903,8 @@ class EuchreGame(tk.Tk):
                 self.coach_bg_color = "#223b2b" 
                     
             self.configure(bg=self.main_bg_color)
-                
+            SoundFX.set_muted(self.mute_card_sounds_var.get())
+
             self.autoplay_mode = False
             self.ai_profiles["0"] = "Human"
             self.active_drill = self.drill_mode_var.get()
@@ -4865,6 +4948,7 @@ class EuchreGame(tk.Tk):
             activeforeground="#101410", relief=tk.FLAT, bd=0,
             padx=24, pady=7, command=submit_names)
         btn_start.pack(pady=15)
+        self._add_hover_glow(btn_start, glow_color=setup_gold)
         if os.environ.get("BOT_EUCHRE_AUTO_START_SETUP") == "1":
             self.after(250, submit_names)
 
@@ -4931,7 +5015,29 @@ class EuchreGame(tk.Tk):
                 self.lbl_action.config(text="Your turn to bid.")
                 self.render_bidding_ui(); self.render_human_hand()
 
+    def _apply_startup_geometry(self):
+        self.minsize(1100, 700)
+        saved = self.settings_store.data.get("window_geometry")
+        if saved:
+            try:
+                self.geometry(saved)
+                return
+            except tk.TclError:
+                pass
+        screen_w = self.winfo_screenwidth()
+        screen_h = self.winfo_screenheight()
+        width = min(1400, int(screen_w * 0.92))
+        height = min(900, int(screen_h * 0.88))
+        x = max(0, (screen_w - width) // 2)
+        y = max(0, (screen_h - height) // 2)
+        self.geometry(f"{width}x{height}+{x}+{y}")
+
     def on_closing(self):
+        try:
+            self.settings_store.data["window_geometry"] = self.geometry()
+            self.settings_store.save()
+        except (tk.TclError, OSError):
+            pass
         if self.ai_model and self.game_state != "main_menu":
             try:
                 self._write_autosave()
@@ -6028,6 +6134,42 @@ class EuchreGame(tk.Tk):
             self.configure(bg=self.main_bg_color)
             self.render_human_hand()
             self._close_tool_window("accessibility")
+        tk.Button(
+            dialog, text="Apply", command=apply, bg="#71C784",
+            fg="black", font=("Arial", 11, "bold")).pack(pady=14)
+
+    def show_sound_settings(self):
+        dialog, created = self._new_tool_window(
+            "sound_settings", "Sound Settings", "380x230")
+        if not created:
+            return
+        mute_var = tk.BooleanVar(
+            value=self.settings_store.data.get("mute_card_sounds", False))
+        variety_var = tk.BooleanVar(
+            value=self.settings_store.data.get("sound_variety", True))
+        tk.Checkbutton(
+            dialog, text="Mute all game sounds", variable=mute_var,
+            bg=self.coach_bg_color, fg="white", selectcolor="#333333",
+            activebackground=self.coach_bg_color,
+            activeforeground="white", font=("Arial", 12)).pack(
+                anchor="w", padx=30, pady=(20, 10))
+        tk.Checkbutton(
+            dialog, text="Extra sound variety (trick/deal/call cues)",
+            variable=variety_var,
+            bg=self.coach_bg_color, fg="white", selectcolor="#333333",
+            activebackground=self.coach_bg_color,
+            activeforeground="white", font=("Arial", 12)).pack(
+                anchor="w", padx=30, pady=10)
+
+        def apply():
+            self.settings_store.data.update({
+                "mute_card_sounds": mute_var.get(),
+                "sound_variety": variety_var.get(),
+            })
+            self.settings_store.save()
+            SoundFX.set_muted(mute_var.get())
+            SoundFX.set_variety_enabled(variety_var.get())
+            self._close_tool_window("sound_settings")
         tk.Button(
             dialog, text="Apply", command=apply, bg="#71C784",
             fg="black", font=("Arial", 11, "bold")).pack(pady=14)
@@ -7330,11 +7472,16 @@ class EuchreGame(tk.Tk):
         self.bind("<F1>", lambda _event: self.show_help_guide())
         self.show_logic_var = tk.BooleanVar(value=False)
         self.info_frame = tk.Frame(self, bg=self.main_bg_color); self.info_frame.pack(side=tk.TOP, pady=6, fill=tk.X)
-        self.lbl_trump = tk.Label(self.info_frame, text="TRUMP: Uncalled", font=("Arial", 15, "bold"), bg="#F5F2E8", fg="#1E1E1E", padx=11, pady=6); self.lbl_trump.pack(side=tk.LEFT, padx=10)
+        self.lbl_trump = tk.Label(
+            self.info_frame, text="TRUMP: Uncalled", font=("Arial", 15, "bold"),
+            bg="#F5F2E8", fg="#1E1E1E", padx=11, pady=6,
+            highlightthickness=3, highlightbackground="#F5F2E8", highlightcolor="#F5F2E8")
+        self.lbl_trump.pack(side=tk.LEFT, padx=10)
 
         self.btn_main_menu = tk.Button(self.info_frame, text="⏮ Main Menu", font=("Arial", 10, "bold"), bg="#4F6D7A", fg="white", activebackground="#617F8C", activeforeground="white", command=self.return_to_main_menu); self.btn_main_menu.pack(side=tk.RIGHT, padx=(8, 10))
         ToolTip(self.btn_main_menu, "Abandon this game and return to player, brain, search-depth, and drill setup.")
         self.btn_stats = tk.Button(self.info_frame, text="📊 Stats & Coach", font=("Arial", 10, "bold"), bg="#1E90FF", fg="white", activebackground="#49A4FF", activeforeground="white", command=self.show_stats); self.btn_stats.pack(side=tk.RIGHT, padx=(6, 8))
+        ToolTip(self.btn_stats, "Review lifetime stats, blunder tracking, and coached feedback on your recent play.")
         self.tools_menu_button = tk.Menubutton(
             self.info_frame, text="⚙ Tools", font=("Arial", 10, "bold"),
             bg="#59636B", fg="white", activebackground="#717D86",
@@ -7387,6 +7534,8 @@ class EuchreGame(tk.Tk):
             label="Settings Management...", command=self.show_settings_management)
         tools_menu.add_command(
             label="Accessibility...", command=self.show_accessibility_settings)
+        tools_menu.add_command(
+            label="Sound Settings...", command=self.show_sound_settings)
         tools_menu.add_checkbutton(
             label="Show AI Voids",
             variable=self.show_logic_var,
@@ -7402,6 +7551,7 @@ class EuchreGame(tk.Tk):
         tools_menu.add_cascade(label="Open Windows", menu=self.windows_menu)
         self.tools_menu_button.config(menu=tools_menu)
         self.tools_menu_button.pack(side=tk.RIGHT, padx=(4, 6))
+        ToolTip(self.tools_menu_button, "Analysis tools, tournament modes, settings, and diagnostics.")
         self.autoplay_menu_button = tk.Menubutton(
             self.info_frame, text="▶ Autoplay: Off", font=("Arial", 10, "bold"),
             bg="#FF8C00", fg="black", activebackground="#FFB347",
@@ -7420,7 +7570,11 @@ class EuchreGame(tk.Tk):
         self.autoplay_menu_button.pack(side=tk.RIGHT, padx=(6, 8))
         ToolTip(self.autoplay_menu_button, "Start, stop, or switch the AI controlling your seat at any point in the game.")
         
-        self.score_frame = tk.Frame(self.info_frame, bg=self.dark_bg_color, bd=2, relief=tk.SUNKEN); self.score_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
+        self.score_frame = tk.Frame(
+            self.info_frame, bg=self.dark_bg_color, bd=2, relief=tk.SUNKEN,
+            highlightthickness=3, highlightbackground=self.dark_bg_color,
+            highlightcolor=self.dark_bg_color)
+        self.score_frame.pack(side=tk.LEFT, fill=tk.X, expand=True, padx=(0, 10))
         self.lbl_game_score = tk.Label(self.score_frame, text=f"GAME: {self.get_player_display_name(0)} & {self.get_player_display_name(2)} 0 | {self.get_player_display_name(1)} & {self.get_player_display_name(3)} 0", bg=self.dark_bg_color, fg="#F2D777", font=("Arial", 14, "bold")); self.lbl_game_score.pack(fill=tk.X, padx=16, pady=(5, 2))
         self.lbl_tricks = tk.Label(self.score_frame, text="TRICKS: Your Team 0 | Opponents 0", bg=self.dark_bg_color, fg="#E5E5E5", font=("Arial", 14)); self.lbl_tricks.pack(fill=tk.X, padx=16, pady=(1, 5))
 
@@ -7436,29 +7590,42 @@ class EuchreGame(tk.Tk):
         self.table_frame.pack(side=tk.RIGHT, expand=True, fill=tk.BOTH, padx=(10, 20), pady=5)
         self.table_frame.pack_propagate(False)
         self.table_frame.bind("<Configure>", self._draw_grid)
+        self._sidebar_width = 420
+        self.bind("<Configure>", self._on_root_resize)
         
         self.seat_name_labels = {}
+        self.seat_badge_canvases = {}
         p1_frame = tk.Frame(self.table_frame, bg=self.dark_bg_color); p1_frame.place(relx=0.02, rely=0.50, anchor=tk.W)
-        self.seat_name_labels[1] = tk.Label(p1_frame, text=self.get_player_display_name(1), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[1].pack()
+        p1_row = tk.Frame(p1_frame, bg=self.dark_bg_color); p1_row.pack()
+        self.seat_badge_canvases[1] = tk.Canvas(p1_row, width=16, height=16, bg=self.dark_bg_color, highlightthickness=0); self.seat_badge_canvases[1].pack(side=tk.LEFT, padx=(0, 4))
+        self.seat_name_labels[1] = tk.Label(p1_row, text=self.get_player_display_name(1), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[1].pack(side=tk.LEFT)
         self.lbl_p1_voids = tk.Label(p1_frame, text="", bg=self.dark_bg_color, fg="#ff6666", font=("Arial", 10, "italic")); self.lbl_p1_voids.pack()
 
         p2_frame = tk.Frame(self.table_frame, bg=self.dark_bg_color); p2_frame.place(relx=0.5, rely=0.02, anchor=tk.N)
-        self.seat_name_labels[2] = tk.Label(p2_frame, text=self.get_player_display_name(2), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[2].pack()
+        p2_row = tk.Frame(p2_frame, bg=self.dark_bg_color); p2_row.pack()
+        self.seat_badge_canvases[2] = tk.Canvas(p2_row, width=16, height=16, bg=self.dark_bg_color, highlightthickness=0); self.seat_badge_canvases[2].pack(side=tk.LEFT, padx=(0, 4))
+        self.seat_name_labels[2] = tk.Label(p2_row, text=self.get_player_display_name(2), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[2].pack(side=tk.LEFT)
         self.lbl_p2_voids = tk.Label(p2_frame, text="", bg=self.dark_bg_color, fg="#ff6666", font=("Arial", 10, "italic")); self.lbl_p2_voids.pack()
 
         p3_frame = tk.Frame(self.table_frame, bg=self.dark_bg_color); p3_frame.place(relx=0.98, rely=0.50, anchor=tk.E)
-        self.seat_name_labels[3] = tk.Label(p3_frame, text=self.get_player_display_name(3), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[3].pack()
+        p3_row = tk.Frame(p3_frame, bg=self.dark_bg_color); p3_row.pack()
+        self.seat_badge_canvases[3] = tk.Canvas(p3_row, width=16, height=16, bg=self.dark_bg_color, highlightthickness=0); self.seat_badge_canvases[3].pack(side=tk.LEFT, padx=(0, 4))
+        self.seat_name_labels[3] = tk.Label(p3_row, text=self.get_player_display_name(3), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[3].pack(side=tk.LEFT)
         self.lbl_p3_voids = tk.Label(p3_frame, text="", bg=self.dark_bg_color, fg="#ff6666", font=("Arial", 10, "italic")); self.lbl_p3_voids.pack()
 
-        self.seat_name_labels[0] = tk.Label(self.table_frame, text=self.get_player_display_name(0), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[0].place(relx=0.5, rely=0.98, anchor=tk.S)
+        p0_frame = tk.Frame(self.table_frame, bg=self.dark_bg_color); p0_frame.place(relx=0.5, rely=0.98, anchor=tk.S)
+        self.seat_badge_canvases[0] = tk.Canvas(p0_frame, width=16, height=16, bg=self.dark_bg_color, highlightthickness=0); self.seat_badge_canvases[0].pack(side=tk.LEFT, padx=(0, 4))
+        self.seat_name_labels[0] = tk.Label(p0_frame, text=self.get_player_display_name(0), bg=self.dark_bg_color, fg="lightgray", font=("Arial", 12, "bold")); self.seat_name_labels[0].pack(side=tk.LEFT)
 
         self.lbl_upcard = tk.Label(self.table_frame, text="", font=("Arial", 32, "bold"), bg=self.dark_bg_color, fg="white", width=5, height=2, relief=tk.FLAT)
         self.table_card_face = "#F6F3E9"
         self.table_card_trump_face = "#FFE066"
         self.table_card_back = "#5A6070"
         self.table_card_border = "#CBBEA2"
+        self.kitty_back_canvas = self._make_card_back_widget(self.table_frame, width=120, height=95)
         self.action_panel = tk.Frame(self.table_frame, bg="#173025", bd=1, relief=tk.RIDGE); self.action_panel.place(relx=0.02, rely=0.02, anchor=tk.NW)
         self.lbl_action = tk.Label(self.action_panel, text="Dealing...", font=("Arial", 14, "bold"), bg="#173025", fg="#A5F3BC", justify=tk.LEFT, wraplength=320, padx=12, pady=7); self.lbl_action.pack()
+        self._wrap_action_label_transitions()
         self.search_indicator_frame = None
         self.search_indicator_label = None
         self.search_progress = None
@@ -7523,12 +7690,204 @@ class EuchreGame(tk.Tk):
             f"Search: {self.table_neural_play_iters}/{self.table_neural_bid_rollouts} | "
             f"Seed: {self.current_hand_seed or '-'} | Device: {self.cheems_device} | "
             f"Workers: {self.active_searches}"))
+        self._sync_autoplay_pulse()
         self.after(500, self._update_status_bar)
+
+    def _sync_autoplay_pulse(self):
+        if not hasattr(self, "autoplay_menu_button") or not self.autoplay_menu_button.winfo_exists():
+            return
+        reduced = self.settings_store.data.get("reduced_motion", False)
+        if self.autoplay_mode:
+            if reduced:
+                self.autoplay_menu_button.config(bg="#FFB347")
+                return
+            if not getattr(self, "_autoplay_pulsing", False):
+                self._autoplay_pulsing = True
+                self._autoplay_pulse_token = getattr(self, "_autoplay_pulse_token", 0) + 1
+                self._pulse_autoplay_button(self._autoplay_pulse_token)
+        elif getattr(self, "_autoplay_pulsing", False) or reduced:
+            self._autoplay_pulsing = False
+            self.autoplay_menu_button.config(bg="#FF8C00")
+
+    def _pulse_autoplay_button(self, token):
+        if (token != getattr(self, "_autoplay_pulse_token", None) or not self.autoplay_mode
+                or not hasattr(self, "autoplay_menu_button") or not self.autoplay_menu_button.winfo_exists()):
+            self._autoplay_pulsing = False
+            return
+        next_color = "#FFB347" if self.autoplay_menu_button.cget("bg") != "#FFB347" else "#FF8C00"
+        self.autoplay_menu_button.config(bg=next_color)
+        self.after(500, self._pulse_autoplay_button, token)
 
     def _draw_grid(self, event=None):
         if not isinstance(self.table_frame, tk.Canvas): return
         self.table_frame.delete("grid_line")
         self.table_frame.config(bg=self.dark_bg_color)
+
+    def _on_root_resize(self, event=None):
+        if event is not None and event.widget is not self:
+            return
+        width = self.winfo_width()
+        if width <= 1:
+            return
+        target = max(260, min(420, int(width * 0.22)))
+        if target != self._sidebar_width:
+            self._sidebar_width = target
+            self.sidebar_frame.config(width=target)
+
+    def _make_card_back_widget(self, parent, width=100, height=80):
+        # Diagonal-lattice texture drawn once; cheaper and cleaner than a flat rectangle.
+        canvas = tk.Canvas(parent, width=width, height=height, bg=self.table_card_back, highlightthickness=0, bd=0)
+        canvas.create_rectangle(2, 2, width - 2, height - 2, outline="#8892A0", width=2)
+        step = 14
+        for offset in range(-height, width, step):
+            canvas.create_line(offset, height, offset + height, 0, fill="#71798A", width=2)
+        return canvas
+
+    def _add_hover_glow(self, btn, glow_color="#FFD700"):
+        base_relief = btn.cget("relief")
+        base_hbg = btn.cget("highlightbackground")
+        btn.config(highlightthickness=2)
+        btn.bind("<Enter>", lambda _e, b=btn, gc=glow_color: b.config(relief=tk.SOLID, highlightbackground=gc), add="+")
+        btn.bind("<Leave>", lambda _e, b=btn, r=base_relief, hb=base_hbg: b.config(relief=r, highlightbackground=hb), add="+")
+
+    def _wrap_action_label_transitions(self):
+        original_config = self.lbl_action.config
+        def wrapped(*args, **kwargs):
+            if "text" in kwargs and kwargs["text"] != self.lbl_action.cget("text") and not getattr(self, "_suppress_action_flash", False):
+                self._flash_action_message()
+                self._sync_thinking_ellipsis(kwargs["text"])
+            return original_config(*args, **kwargs)
+        self.lbl_action.config = wrapped
+        self.lbl_action.configure = wrapped
+
+    def _sync_thinking_ellipsis(self, text):
+        self._ellipsis_token = getattr(self, "_ellipsis_token", 0) + 1
+        if text.endswith("...") and not self.settings_store.data.get("reduced_motion", False):
+            base_text = text[:-3].rstrip()
+            self.after(450, self._animate_thinking_ellipsis, base_text, self._ellipsis_token, 1)
+
+    def _animate_thinking_ellipsis(self, base_text, token, dot_count):
+        if token != self._ellipsis_token or not self.lbl_action.winfo_exists():
+            return
+        current_text = self.lbl_action.cget("text")
+        # Only continue if a newer message hasn't already replaced this one.
+        if not current_text.startswith(base_text):
+            return
+        dots = "." * (dot_count % 3 + 1)
+        self._suppress_action_flash = True
+        self.lbl_action.config(text=f"{base_text}{dots}")
+        self._suppress_action_flash = False
+        self.after(450, self._animate_thinking_ellipsis, base_text, token, dot_count + 1)
+
+    def _flash_action_message(self):
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        if not hasattr(self, "action_panel") or not self.action_panel.winfo_exists():
+            return
+        flash_bg = "#2A4A38"
+        base_bg = "#173025"
+        self.action_panel.config(bg=flash_bg)
+        self.lbl_action.config(bg=flash_bg)
+        def revert():
+            if self.action_panel.winfo_exists():
+                self.action_panel.config(bg=base_bg)
+                self.lbl_action.config(bg=base_bg)
+        self.after(160, revert)
+
+    def _flash_game_win(self, team1_won):
+        if not hasattr(self, "score_frame") or not self.score_frame.winfo_exists():
+            return
+        glow_color = "#FFD700" if team1_won else "#A85454"
+        base_color = self.dark_bg_color
+        if self.settings_store.data.get("reduced_motion", False):
+            self.score_frame.config(highlightbackground=glow_color)
+            self.after(600, lambda: self.score_frame.config(highlightbackground=base_color) if self.score_frame.winfo_exists() else None)
+            return
+        def pulse(count=0):
+            if not self.score_frame.winfo_exists():
+                return
+            self.score_frame.config(highlightbackground=glow_color if count % 2 == 0 else base_color)
+            if count < 7:
+                self.after(160, pulse, count + 1)
+            else:
+                self.score_frame.config(highlightbackground=base_color)
+        pulse()
+
+    def _flash_trump_called(self):
+        if not hasattr(self, "lbl_trump") or not self.lbl_trump.winfo_exists():
+            return
+        glow_color = "#B22222" if self.trump_suit in ('♥', '♦') else "#1E1E1E"
+        base_color = "#F5F2E8"
+        if self.settings_store.data.get("reduced_motion", False):
+            self.lbl_trump.config(highlightbackground=glow_color)
+            self.after(500, lambda: self.lbl_trump.config(highlightbackground=base_color) if self.lbl_trump.winfo_exists() else None)
+            return
+        def pulse(count=0):
+            if not self.lbl_trump.winfo_exists():
+                return
+            self.lbl_trump.config(highlightbackground=glow_color if count % 2 == 0 else base_color)
+            if count < 5:
+                self.after(150, pulse, count + 1)
+            else:
+                self.lbl_trump.config(highlightbackground=base_color)
+        pulse()
+
+    def _celebrate_sweep(self, team1_won):
+        if not hasattr(self, "table_frame") or not self.table_frame.winfo_exists():
+            return
+        banner_text = "SWEEP! 5-0" if team1_won else "OPPONENTS SWEEP"
+        color = "#FFD700" if team1_won else "#FF6B6B"
+        banner = tk.Label(
+            self.table_frame, text=banner_text, font=("Arial", 26, "bold"),
+            bg=self.dark_bg_color, fg=color)
+        banner.place(relx=0.5, rely=0.45, anchor=tk.CENTER)
+        banner.lift()
+        self._schedule_overlay_safety_destroy(banner, 2200)
+        if self.settings_store.data.get("reduced_motion", False):
+            self.after(1100, lambda: banner.destroy() if banner.winfo_exists() else None)
+            return
+        sizes = [26, 34, 40, 34, 28]
+        def step(i=0):
+            if not banner.winfo_exists():
+                return
+            if i >= len(sizes):
+                banner.destroy()
+                return
+            banner.config(font=("Arial", sizes[i], "bold"))
+            self.after(160, step, i + 1)
+        step()
+
+    def _seat_badge_style(self, profile_name):
+        if not profile_name or profile_name == "Human":
+            return None
+        base_styles = {
+            "Arbiter": ("A", "#4FA8E0"), "Ironclad": ("I", "#8FA6B2"),
+            "Kyle": ("K", "#FF8C42"), "The MC": ("M", "#B983FF"),
+            "Wildcard": ("W", "#FFD166"), "Unanimous Council": ("U", "#66D9A0"),
+        }
+        if profile_name in base_styles:
+            return base_styles[profile_name]
+        category_colors = {
+            "Base Neural": "#4FA8E0", "Ensemble": "#66D9A0", "Router": "#E0764F",
+            "Hybrid": "#B983FF", "Learner": "#FFD166", "Pure MCTS": "#B983FF",
+        }
+        category = PROFILE_CATEGORIES.get(profile_name, "Profile")
+        color = category_colors.get(category, "#9AA5AE")
+        return (profile_name[0].upper(), color)
+
+    def _update_seat_badges(self):
+        if not hasattr(self, "seat_badge_canvases"):
+            return
+        for seat_idx, canvas in self.seat_badge_canvases.items():
+            if not canvas.winfo_exists():
+                continue
+            style = self._seat_badge_style(self.ai_profiles.get(str(seat_idx), "Human"))
+            canvas.delete("all")
+            if style is None:
+                continue
+            letter, color = style
+            canvas.create_oval(1, 1, 15, 15, fill=color, outline="#1A1A1A", width=1)
+            canvas.create_text(8, 8, text=letter, font=("Arial", 8, "bold"), fill="#101010")
 
     def update_boss_tracker(self):
         if not self.trump_suit:
@@ -8841,13 +9200,18 @@ class EuchreGame(tk.Tk):
         if self.game_state in ["bidding_r1", "discarding"]:
             self.lbl_upcard.config(text=str(self.up_card), bg=self.table_card_face, fg=self.up_card.color, font=("Arial", 32, "bold"), width=5, height=2, relief=tk.RIDGE, bd=3)
             self.lbl_upcard.place(relx=0.5, rely=0.55, anchor=tk.CENTER); self.lbl_upcard.lift()
+            self.kitty_back_canvas.place_forget()
         elif self.game_state == "bidding_r2":
-            self.lbl_upcard.config(text="X", bg=self.table_card_back, fg="#ECF0F3", font=("Arial", 32, "bold"), width=5, height=2, relief=tk.RIDGE, bd=3)
-            self.lbl_upcard.place(relx=0.5, rely=0.55, anchor=tk.CENTER); self.lbl_upcard.lift()
-        else: self.lbl_upcard.place_forget()
+            self.lbl_upcard.place_forget()
+            self.kitty_back_canvas.place(relx=0.5, rely=0.55, anchor=tk.CENTER)
+            self.tk.call("raise", self.kitty_back_canvas._w)
+        else:
+            self.lbl_upcard.place_forget()
+            self.kitty_back_canvas.place_forget()
 
         for lbl in self.played_card_labels: lbl.destroy()
         self.played_card_labels = []
+        self.played_card_label_by_seat = {}
 
         if self.game_state == "playing":
             positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
@@ -8855,8 +9219,10 @@ class EuchreGame(tk.Tk):
                 bg_color = self.table_card_trump_face if self.is_trump(card) else self.table_card_face
                 lbl = tk.Label(self.table_frame, text=str(card), font=("Arial", 24, "bold"), bg=bg_color, fg=card.color, width=5, height=2, relief=tk.RIDGE, bd=2)
                 lbl.place(relx=positions[p_idx][0], rely=positions[p_idx][1], anchor=tk.CENTER); self.played_card_labels.append(lbl)
+                self.played_card_label_by_seat[p_idx] = lbl
 
         if hasattr(self, 'seat_name_labels'):
+            active_seat = self.current_turn if self.game_state == "playing" else None
             for seat_idx, label in self.seat_name_labels.items():
                 if self.game_state == "playing" and seat_idx == self.current_turn:
                     label.config(fg="#FFE082", bg=self.dark_bg_color, font=("Arial", 12, "bold"))
@@ -8864,6 +9230,12 @@ class EuchreGame(tk.Tk):
                     label.config(fg="#7BDFF2", bg=self.dark_bg_color, font=("Arial", 12, "bold"))
                 else:
                     label.config(fg="#D8D8D8", bg=self.dark_bg_color, font=("Arial", 12, "bold"))
+            if active_seat != self._turn_pulse_seat:
+                self._turn_pulse_token += 1
+                self._turn_pulse_seat = active_seat
+                if active_seat is not None and not self.settings_store.data.get("reduced_motion", False):
+                    self.after(420, self._pulse_turn_indicator, active_seat, self._turn_pulse_token)
+        self._update_seat_badges()
 
         if self.game_state == "playing":
             if self.current_turn == 0 and not self.autoplay_mode:
@@ -9054,6 +9426,9 @@ class EuchreGame(tk.Tk):
         self.trick = []; self.played_cards = []; self.trainer_mistakes = []; self.cached_hint = None
         self.is_rewind_mode = False 
 
+        SoundFX.deal_cards()
+        self._animate_deal_flourish()
+
         if self._configure_drill_scenario(deck):
             self.loner_var.set(self.is_loner)
             if self.game_state in {"bidding_r1", "bidding_r2"}:
@@ -9082,6 +9457,7 @@ class EuchreGame(tk.Tk):
         
         self.game_state = "bidding_r1"; self.bidding_player = (self.dealer_idx + 1) % 4; self.passed_count = 0
         self.lbl_action.config(text="Round 1 Bidding..."); self.update_table_graphics(); self.render_human_hand()
+        self._animate_upcard_reveal()
         self._schedule_autosave()
         self._record_session_event("hand_start", {
             "seed": self.current_hand_seed,
@@ -9221,6 +9597,7 @@ class EuchreGame(tk.Tk):
             self.bidding_player = (self.bidding_player + 1) % 4; self.after(self._action_delay_ms(), self.process_bidding)
         else:
             self.caller_idx = self.bidding_player; self.trump_suit = suit
+            SoundFX.call_trump()
             for i in range(4): self.sort_hand(self.hands[i])
             if self.bidding_player == 0 and not self.autoplay_mode: self.is_loner = self.loner_var.get()
             else: self.is_loner = is_loner
@@ -9254,6 +9631,7 @@ class EuchreGame(tk.Tk):
             
             loner_text = " (GOING ALONE!)" if self.is_loner else ""
             self.lbl_trump.config(text=f"TRUMP: {self.trump_suit} (Called by {self.get_player_display_name(self.caller_idx)}){loner_text}", bg="yellow")
+            self._flash_trump_called()
             for w in self.bidding_buttons_frame.winfo_children(): w.destroy()
             self.render_human_hand()
             
@@ -9307,6 +9685,7 @@ class EuchreGame(tk.Tk):
         self._clear_action_message()
         self._capture_expected_tricks()
         self.update_table_graphics()
+        self._animate_discard_toss(dealer_idx, discard_card)
         self.render_human_hand()
         self._schedule_autosave()
         self.play_ai_turns()
@@ -9315,13 +9694,21 @@ class EuchreGame(tk.Tk):
         for w in self.bidding_buttons_frame.winfo_children(): w.destroy()
         self.chk_loner = tk.Checkbutton(self.bidding_buttons_frame, text="Go Alone", variable=self.loner_var, font=("Arial", 12, "bold"), bg=self.main_bg_color, fg="white", selectcolor=self.dark_bg_color); self.chk_loner.pack(side=tk.LEFT, padx=10)
         if self.game_state == "bidding_r1":
-            tk.Button(self.bidding_buttons_frame, text=f"Order Up {self.up_card.suit}", font=("Arial", 14, "bold"), bg="lightgreen", command=lambda: self._handle_bid_decision(True, self.up_card.suit)).pack(side=tk.LEFT, padx=10)
-            tk.Button(self.bidding_buttons_frame, text="Pass", font=("Arial", 14, "bold"), bg="lightcoral", command=lambda: self._handle_bid_decision(False, None)).pack(side=tk.LEFT, padx=10)
+            order_btn = tk.Button(self.bidding_buttons_frame, text=f"Order Up {self.up_card.suit}", font=("Arial", 14, "bold"), bg="lightgreen", command=lambda: self._handle_bid_decision(True, self.up_card.suit))
+            order_btn.pack(side=tk.LEFT, padx=10)
+            self._add_hover_glow(order_btn)
+            pass_btn = tk.Button(self.bidding_buttons_frame, text="Pass", font=("Arial", 14, "bold"), bg="lightcoral", command=lambda: self._handle_bid_decision(False, None))
+            pass_btn.pack(side=tk.LEFT, padx=10)
+            self._add_hover_glow(pass_btn)
         elif self.game_state == "bidding_r2":
             for suit in [s for s in SUITS_T if s != self.up_card.suit]: 
-                tk.Button(self.bidding_buttons_frame, text=f"Call {suit}", font=("Arial", 14, "bold"), command=lambda s=suit: self._handle_bid_decision(True, s)).pack(side=tk.LEFT, padx=5)
+                call_btn = tk.Button(self.bidding_buttons_frame, text=f"Call {suit}", font=("Arial", 14, "bold"), command=lambda s=suit: self._handle_bid_decision(True, s))
+                call_btn.pack(side=tk.LEFT, padx=5)
+                self._add_hover_glow(call_btn)
             if not (self.passed_count == 3 and self.bidding_player == self.dealer_idx):
-                tk.Button(self.bidding_buttons_frame, text="Pass", font=("Arial", 14, "bold"), bg="lightcoral", command=lambda: self._handle_bid_decision(False, None)).pack(side=tk.LEFT, padx=10)
+                pass_btn = tk.Button(self.bidding_buttons_frame, text="Pass", font=("Arial", 14, "bold"), bg="lightcoral", command=lambda: self._handle_bid_decision(False, None))
+                pass_btn.pack(side=tk.LEFT, padx=10)
+                self._add_hover_glow(pass_btn)
 
     def render_human_hand(self):
         for w in self.hand_buttons_frame.winfo_children(): w.destroy()
@@ -9364,11 +9751,24 @@ class EuchreGame(tk.Tk):
             self.lbl_live_odds.config(text="")
 
         if self.game_state == "playing" and self.loner_partner_idx == 0:
-            tk.Label(self.hand_buttons_frame, text="Sitting out this hand.", font=("Arial", 14, "italic"), bg=self.main_bg_color, fg="white").pack()
+            sitting_out = tk.Frame(self.hand_buttons_frame, bg=self.main_bg_color)
+            sitting_out.pack(pady=6)
+            ghost_row = tk.Frame(sitting_out, bg=self.main_bg_color)
+            ghost_row.pack()
+            for _ in range(5):
+                tk.Label(
+                    ghost_row, bg=self.table_card_back, width=4, height=2,
+                    relief=tk.GROOVE, bd=1).pack(side=tk.LEFT, padx=3)
+            tk.Label(
+                sitting_out, text="Sitting Out — Your Partner Is Going Alone",
+                font=("Arial", 13, "italic", "bold"), bg=self.main_bg_color,
+                fg="#C8D6CC").pack(pady=(6, 0))
             return
 
         legal_moves = self.get_legal_moves(self.hands[0])
         highlight_suit = self.trump_suit if self.trump_suit else (self.up_card.suit if self.up_card else None)
+        hand_size = len(self.hands[0])
+        fan_mid = (hand_size - 1) / 2.0
 
         for index, card in enumerate(self.hands[0]):
             is_highlighted = highlight_suit and (card.suit == highlight_suit or (card.rank == 'J' and card.suit == SAME_COLOR_T[highlight_suit]))
@@ -9380,16 +9780,23 @@ class EuchreGame(tk.Tk):
             cmd = lambda i=index, active=is_active: self.human_discard_card(i) if self.game_state == "discarding" else self.human_play_card(i) if active else None
             text_color = card.color if is_active else "#8A8A8A"
             large_cards = self.settings_store.data.get("large_cards", False)
-            tk.Button(
+            btn = tk.Button(
                 self.hand_buttons_frame, text=str(card),
                 font=("Arial", 24 if large_cards else 21, "bold"),
                 bg=bg_color, fg=text_color, width=5 if large_cards else 4,
                 height=2 if large_cards else 2, command=cmd,
                 relief=tk.RAISED if is_active else tk.GROOVE,
-                bd=2 if is_active else 1,
+                bd=2,
+                # Fixed-size highlight ring (thickness never changes) avoids a layout reflow on hover.
+                highlightthickness=2, highlightbackground=bg_color, highlightcolor=bg_color,
                 activebackground=bg_color,
-                disabledforeground="#8A8A8A").pack(
-                    side=tk.LEFT, padx=4 if large_cards else 3)
+                disabledforeground="#8A8A8A")
+            # Gentle fan: cards curve down toward each edge of the hand.
+            fan_offset = round(abs(index - fan_mid) * 4)
+            btn.pack(side=tk.LEFT, padx=4 if large_cards else 3, pady=(fan_offset, 0))
+            if is_active:
+                btn.bind("<Enter>", lambda _e, b=btn: b.config(relief=tk.SOLID, highlightbackground="#FFD700"))
+                btn.bind("<Leave>", lambda _e, b=btn, bg=bg_color: b.config(relief=tk.RAISED, highlightbackground=bg))
 
     def human_discard_card(self, index):
         if self.game_state != "discarding": return
@@ -9430,7 +9837,9 @@ class EuchreGame(tk.Tk):
         
         self.game_state = "playing"; self.current_turn = (self.dealer_idx + 1) % 4
         self._clear_action_message(); self._capture_expected_tricks()
-        self.cached_hint = None; self.render_human_hand(); self.update_table_graphics(); self.play_ai_turns()
+        self.cached_hint = None; self.render_human_hand(); self.update_table_graphics()
+        self._animate_discard_toss(0, discarded_card)
+        self.play_ai_turns()
 
     def _save_trick_snapshot(self):
         tn = (len(self.played_cards) // 4) + 1
@@ -9664,7 +10073,8 @@ class EuchreGame(tk.Tk):
             led = self.get_effective_suit(self.trick[0][1])
             if self.get_effective_suit(human_card) != led: self.voids[0].add(led)
                 
-        self.trick.append((0, human_card)); SoundFX.play_card(); self.update_table_graphics(); self.current_turn = 1 
+        self.trick.append((0, human_card)); SoundFX.play_card(); self.current_turn = 1; self.update_table_graphics()
+        self._animate_played_card_flight(0, human_card)
         self._set_controls_state(tk.NORMAL); self.render_human_hand(); self.check_trick_end()
 
     def play_ai_turns(self):
@@ -9757,21 +10167,253 @@ class EuchreGame(tk.Tk):
             led = self.get_effective_suit(self.trick[0][1])
             if self.get_effective_suit(played_card) != led: self.voids[player_idx].add(led)
         self.trick.append((player_idx, played_card)); SoundFX.play_card() 
-        self.update_table_graphics()
         self.current_turn = advance_turn_after_play(
             self.current_turn, self.is_loner, self.loner_partner_idx)
+        self.update_table_graphics()
+        self._animate_played_card_flight(player_idx, played_card)
         self.check_trick_end()
 
     def update_dealer_chip(self):
         positions = {0: (0.5, 0.85), 1: (0.05, 0.60), 2: (0.5, 0.16), 3: (0.95, 0.60)}
-        self.dealer_canvas.place(relx=positions[self.dealer_idx][0], rely=positions[self.dealer_idx][1], anchor=tk.CENTER)
-        # Canvas.lift()/Canvas.tkraise() are item-raise APIs; call Tk widget raise explicitly.
+        dest_relx, dest_rely = positions[self.dealer_idx]
+        prev_pos = getattr(self, "_dealer_chip_pos", None)
+        self._dealer_chip_pos = (dest_relx, dest_rely)
+        if prev_pos is None or prev_pos == (dest_relx, dest_rely) or self.settings_store.data.get("reduced_motion", False):
+            self.dealer_canvas.place(relx=dest_relx, rely=dest_rely, anchor=tk.CENTER)
+            # Canvas.lift()/Canvas.tkraise() are item-raise APIs; call Tk widget raise explicitly.
+            self.tk.call("raise", self.dealer_canvas._w)
+            return
+        start_relx, start_rely = prev_pos
         self.tk.call("raise", self.dealer_canvas._w)
+        steps = 10
+        def step(i=0):
+            if not self.dealer_canvas.winfo_exists():
+                return
+            if i >= steps:
+                self.dealer_canvas.place(relx=dest_relx, rely=dest_rely, anchor=tk.CENTER)
+                return
+            t = (i + 1) / steps
+            relx = start_relx + (dest_relx - start_relx) * t
+            rely = start_rely + (dest_rely - start_rely) * t
+            self.dealer_canvas.place(relx=relx, rely=rely, anchor=tk.CENTER)
+            self.after(20, step, i + 1)
+        step()
 
     def update_scoreboard(self):
         if self.lbl_game_score and self.lbl_tricks:
             self.lbl_game_score.config(text=f"GAME: {self.get_player_display_name(0)} & {self.get_player_display_name(2)} {self.team1_score} | {self.get_player_display_name(1)} & {self.get_player_display_name(3)} {self.team2_score}")
             self.lbl_tricks.config(text=f"TRICKS: Your Team {self.team1_tricks} | Opponents {self.team2_tricks}")
+
+    def _animate_played_card_flight(self, player_idx, card):
+        # Cosmetic overlay only: slides a duplicate label from the seat toward its resting spot.
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        dest_positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
+        start_positions = {0: (0.5, 1.05), 1: (-0.08, 0.55), 2: (0.5, -0.05), 3: (1.08, 0.55)}
+        if player_idx not in dest_positions:
+            return
+        dest_relx, dest_rely = dest_positions[player_idx]
+        start_relx, start_rely = start_positions[player_idx]
+        bg_color = self.table_card_trump_face if self.is_trump(card) else self.table_card_face
+        flight_lbl = tk.Label(
+            self.table_frame, text=str(card), font=("Arial", 24, "bold"),
+            bg=bg_color, fg=card.color, width=5, height=2, relief=tk.RIDGE, bd=2)
+        flight_lbl.place(relx=start_relx, rely=start_rely, anchor=tk.CENTER)
+        flight_lbl.lift()
+        self._schedule_overlay_safety_destroy(flight_lbl, 400)
+
+        steps = 6
+        def step(i=0):
+            if not flight_lbl.winfo_exists():
+                return
+            if i >= steps:
+                flight_lbl.destroy()
+                return
+            t = (i + 1) / steps
+            relx = start_relx + (dest_relx - start_relx) * t
+            rely = start_rely + (dest_rely - start_rely) * t
+            flight_lbl.place(relx=relx, rely=rely, anchor=tk.CENTER)
+            self.after(16, step, i + 1)
+        step()
+
+    def _schedule_overlay_safety_destroy(self, widget, delay_ms):
+        # Guarantees a transient overlay label cannot linger if its animation chain is ever interrupted.
+        self.after(delay_ms, lambda w=widget: w.destroy() if w.winfo_exists() else None)
+
+    def _animate_deal_flourish(self):
+        # Cosmetic overlay only: a quick sweep of card backs out to each seat.
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        seat_positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
+        steps = 5
+        for order, seat_idx in enumerate((1, 2, 3, 0)):
+            dest_relx, dest_rely = seat_positions[seat_idx]
+            back_lbl = self._make_card_back_widget(self.table_frame, width=90, height=70)
+            back_lbl.place(relx=0.5, rely=0.55, anchor=tk.CENTER)
+            self.tk.call("raise", back_lbl._w)
+            self._schedule_overlay_safety_destroy(back_lbl, 700)
+
+            def step(i=0, lbl=back_lbl, dx=dest_relx, dy=dest_rely):
+                if not lbl.winfo_exists():
+                    return
+                if i >= steps:
+                    lbl.destroy()
+                    return
+                t = (i + 1) / steps
+                relx = 0.5 + (dx - 0.5) * t
+                rely = 0.55 + (dy - 0.55) * t
+                lbl.place(relx=relx, rely=rely, anchor=tk.CENTER)
+                self.after(16, step, i + 1)
+            self.after(order * 60, step)
+
+    def _animate_upcard_reveal(self):
+        # Cosmetic overlay only: slides a duplicate of the up-card in from the dealer's seat.
+        if self.settings_store.data.get("reduced_motion", False) or not self.up_card:
+            return
+        seat_positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
+        start_relx, start_rely = seat_positions.get(self.dealer_idx, (0.5, 0.75))
+        dest_relx, dest_rely = 0.5, 0.55
+        card = self.up_card
+        flight_lbl = tk.Label(
+            self.table_frame, text=str(card), font=("Arial", 32, "bold"),
+            bg=self.table_card_face, fg=card.color, width=5, height=2,
+            relief=tk.RIDGE, bd=3)
+        flight_lbl.place(relx=start_relx, rely=start_rely, anchor=tk.CENTER)
+        flight_lbl.lift()
+        self._schedule_overlay_safety_destroy(flight_lbl, 500)
+
+        steps = 7
+        def step(i=0):
+            if not flight_lbl.winfo_exists():
+                return
+            if i >= steps:
+                flight_lbl.destroy()
+                return
+            t = (i + 1) / steps
+            relx = start_relx + (dest_relx - start_relx) * t
+            rely = start_rely + (dest_rely - start_rely) * t
+            flight_lbl.place(relx=relx, rely=rely, anchor=tk.CENTER)
+            self.after(18, step, i + 1)
+        step()
+
+    def _animate_discard_toss(self, dealer_idx, card):
+        # Cosmetic overlay only: tosses the dealer's discard from their seat into the kitty.
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        seat_positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
+        start_relx, start_rely = seat_positions.get(dealer_idx, (0.5, 0.55))
+        dest_relx, dest_rely = 0.5, 0.55
+        bg_color = self.table_card_trump_face if self.is_trump(card) else self.table_card_face
+        flight_lbl = tk.Label(
+            self.table_frame, text=str(card), font=("Arial", 22, "bold"),
+            bg=bg_color, fg=card.color, width=5, height=2, relief=tk.RIDGE, bd=2)
+        flight_lbl.place(relx=start_relx, rely=start_rely, anchor=tk.CENTER)
+        flight_lbl.lift()
+        self._schedule_overlay_safety_destroy(flight_lbl, 400)
+
+        steps = 7
+        def step(i=0):
+            if not flight_lbl.winfo_exists():
+                return
+            if i >= steps:
+                flight_lbl.destroy()
+                return
+            t = (i + 1) / steps
+            relx = start_relx + (dest_relx - start_relx) * t
+            rely = start_rely + (dest_rely - start_rely) * t
+            flight_lbl.place(relx=relx, rely=rely, anchor=tk.CENTER)
+            self.after(18, step, i + 1)
+        step()
+
+    def _pulse_turn_indicator(self, seat_idx, token):
+        if token != self._turn_pulse_token or not hasattr(self, 'seat_name_labels'):
+            return
+        if self.game_state != "playing" or self.current_turn != seat_idx:
+            return
+        label = self.seat_name_labels.get(seat_idx)
+        if not label or not label.winfo_exists():
+            return
+        bright = "#FFF7D6" if label.cget("fg") != "#FFF7D6" else "#FFE082"
+        label.config(fg=bright)
+        self.after(420, self._pulse_turn_indicator, seat_idx, token)
+
+    def _flash_trick_winner(self):
+        if self.game_state != "playing":
+            return
+        winner_idx = self.evaluate_trick()
+        lbl = self.played_card_label_by_seat.get(winner_idx)
+        if not lbl or not lbl.winfo_exists():
+            return
+        lbl.config(highlightthickness=3, highlightbackground="#FFD700", highlightcolor="#FFD700")
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        def pulse(count=0):
+            if not lbl.winfo_exists():
+                return
+            lbl.config(highlightthickness=4 if count % 2 == 0 else 1)
+            if count < 5:
+                self.after(140, pulse, count + 1)
+        pulse()
+
+    def _animate_trick_sweep(self, winner_idx):
+        # Cosmetic overlay only: slides duplicates of the losing cards toward the winner's seat.
+        if self.settings_store.data.get("reduced_motion", False):
+            return
+        dest_positions = {0: (0.5, 0.75), 1: (0.2, 0.55), 2: (0.5, 0.35), 3: (0.8, 0.55)}
+        dest_relx, dest_rely = dest_positions.get(winner_idx, (0.5, 0.55))
+        steps = 8
+        for seat_idx, lbl in list(self.played_card_label_by_seat.items()):
+            if seat_idx == winner_idx or not lbl.winfo_exists():
+                continue
+            start_relx, start_rely = dest_positions.get(seat_idx, (dest_relx, dest_rely))
+            sweep_lbl = tk.Label(
+                self.table_frame, text=lbl.cget("text"), font=("Arial", 24, "bold"),
+                bg=lbl.cget("bg"), fg=lbl.cget("fg"), width=5, height=2,
+                relief=tk.RIDGE, bd=2)
+            sweep_lbl.place(relx=start_relx, rely=start_rely, anchor=tk.CENTER)
+            sweep_lbl.lift()
+            self._schedule_overlay_safety_destroy(sweep_lbl, 500)
+
+            def step(i=0, sweep_lbl=sweep_lbl, sx=start_relx, sy=start_rely):
+                if not sweep_lbl.winfo_exists():
+                    return
+                if i >= steps:
+                    sweep_lbl.destroy()
+                    return
+                t = (i + 1) / steps
+                relx = sx + (dest_relx - sx) * t
+                rely = sy + (dest_rely - sy) * t
+                sweep_lbl.place(relx=relx, rely=rely, anchor=tk.CENTER)
+                self.after(16, step, i + 1)
+            step()
+
+    def _flash_score_change(self, team1_won, points_awarded):
+        if not self.lbl_game_score or not self.lbl_game_score.winfo_exists():
+            return
+        sign = "+" if team1_won else "-"
+        delta_lbl = tk.Label(
+            self.score_frame, text=f"{sign}{points_awarded}",
+            bg=self.dark_bg_color, fg="#7CFF9C" if team1_won else "#FF8A80",
+            font=("Arial", 16, "bold"))
+        delta_lbl.place(relx=0.95, rely=0.65, anchor=tk.E)
+        original_bg = self.lbl_game_score.cget("bg")
+        self.lbl_game_score.config(bg="#FFD700" if team1_won else "#5A2A2A")
+        if self.settings_store.data.get("reduced_motion", False):
+            delta_lbl.destroy()
+            self.after(300, lambda: self.lbl_game_score.config(bg=original_bg) if self.lbl_game_score.winfo_exists() else None)
+            return
+
+        def rise(i=0, steps=10):
+            if not delta_lbl.winfo_exists():
+                return
+            if i >= steps:
+                delta_lbl.destroy()
+                if self.lbl_game_score.winfo_exists():
+                    self.lbl_game_score.config(bg=original_bg)
+                return
+            delta_lbl.place(relx=0.95, rely=0.65 - (i * 0.05), anchor=tk.E)
+            self.after(60, rise, i + 1)
+        rise()
 
     def evaluate_trick(self):
         return trick_winner(self.trick, self.trump_suit)
@@ -9779,7 +10421,9 @@ class EuchreGame(tk.Tk):
     def check_trick_end(self):
         if self._tournament_paused():
             return
-        if len(self.trick) == (3 if self.is_loner else 4): self.after(1500, self._resolve_trick)
+        if len(self.trick) == (3 if self.is_loner else 4):
+            self._flash_trick_winner()
+            self.after(1500, self._resolve_trick)
         elif self.current_turn == 0 and not self.autoplay_mode: 
             if self.loner_partner_idx == 0: self.current_turn = 1; self.play_ai_turns()
             else: self.render_human_hand() 
@@ -9790,9 +10434,12 @@ class EuchreGame(tk.Tk):
             return
         for _, card in self.trick: self.played_cards.append(card)
         winner_idx = self.evaluate_trick()
-        if winner_idx in [0, 2]: self.team1_tricks += 1
+        team_won = winner_idx in [0, 2]
+        if team_won: self.team1_tricks += 1
         else: self.team2_tricks += 1
-        SoundFX.trick_won(); self.update_scoreboard(); self.trick = []; self.update_table_graphics(); self.current_turn = winner_idx
+        SoundFX.trick_won(team_won)
+        self._animate_trick_sweep(winner_idx)
+        self.update_scoreboard(); self.trick = []; self.update_table_graphics(); self.current_turn = winner_idx
         if (self.team1_tricks + self.team2_tricks) == 5: self.after(1000, self._evaluate_hand) 
         else: 
             if self.current_turn == 0 and not self.autoplay_mode: self.render_human_hand()
@@ -9844,6 +10491,10 @@ class EuchreGame(tk.Tk):
 
         if team1_won: SoundFX.round_win(points_awarded)
         else: SoundFX.round_lose()
+        self._flash_score_change(team1_won, points_awarded)
+        winner_tricks = self.team1_tricks if team1_won else self.team2_tricks
+        if winner_tricks == 5:
+            self._celebrate_sweep(team1_won)
         
         if not self.sandbox_mode and "Drill" not in self.active_drill:
             self.stats_tracker.record_event("hands_played")
@@ -9883,9 +10534,9 @@ class EuchreGame(tk.Tk):
         dialog = tk.Toplevel(self); dialog.title("Grandmaster Post-Hand Report"); dialog.geometry("560x550"); dialog.configure(bg=self.coach_bg_color); dialog.transient(self); dialog.grab_set()
         tk.Label(dialog, text="Post-Hand Analysis", font=("Arial", 16, "bold"), bg=self.coach_bg_color, fg="white").pack(pady=10)
         
-        stat_frame = tk.Frame(dialog, bg=self.coach_bg_color); stat_frame.pack(fill=tk.X, padx=20)
+        stat_frame = tk.Frame(dialog, bg=self.dark_bg_color, bd=1, relief=tk.RIDGE); stat_frame.pack(fill=tk.X, padx=20, pady=(0, 6), ipady=6)
         acc = (self.hand_accuracy_sum / self.hand_accuracy_count) if self.hand_accuracy_count > 0 else 100.0
-        tk.Label(stat_frame, text=f"Play Accuracy: {acc:.1f}%", font=("Arial", 12, "bold"), bg=self.coach_bg_color, fg="#32CD32" if acc>90 else "#ffcc00").pack(side=tk.LEFT)
+        tk.Label(stat_frame, text=f"Play Accuracy: {acc:.1f}%", font=("Arial", 12, "bold"), bg=self.dark_bg_color, fg="#32CD32" if acc>90 else "#ffcc00").pack(side=tk.LEFT, padx=10)
         
         if self.hand_expected_tricks >= 0:
             diff = self.team1_tricks - self.hand_expected_tricks
@@ -9893,7 +10544,7 @@ class EuchreGame(tk.Tk):
             if diff >= 0.5: luck_str += "(Lucky Overperformance)"
             elif diff <= -0.5: luck_str += "(Unlucky Anomaly)"
             else: luck_str += "(Statistically Standard)"
-            tk.Label(stat_frame, text=luck_str, font=("Arial", 10, "italic"), bg=self.coach_bg_color, fg="white").pack(side=tk.RIGHT)
+            tk.Label(stat_frame, text=luck_str, font=("Arial", 10, "italic"), bg=self.dark_bg_color, fg="white").pack(side=tk.RIGHT, padx=10)
 
         if hasattr(self, 'hand_bid_feedback') and self.hand_bid_feedback:
             feedback_color = "#32CD32" if "Good" in self.hand_bid_feedback or "Solid" in self.hand_bid_feedback else "#ffcc00"
@@ -9913,7 +10564,9 @@ class EuchreGame(tk.Tk):
             for m in visible_notes:
                 mf = tk.Frame(scrollable_frame, bg=self.dark_bg_color); mf.pack(fill=tk.X, pady=5)
                 tk.Label(mf, text=m["text"], font=("Arial", 10), bg=self.dark_bg_color, fg="#ffcc00", justify=tk.LEFT, wraplength=400).pack(side=tk.LEFT, padx=10)
-                tk.Button(mf, text="↩ Rewind Here", font=("Arial", 8, "bold"), bg="#1E90FF", fg="white", command=lambda t=m["trick_num"], d=dialog: self._rewind_to_trick(t, d)).pack(side=tk.RIGHT, padx=10)
+                rewind_btn = tk.Button(mf, text="↩ Rewind Here", font=("Arial", 8, "bold"), bg="#1E90FF", fg="white", command=lambda t=m["trick_num"], d=dialog: self._rewind_to_trick(t, d))
+                rewind_btn.pack(side=tk.RIGHT, padx=10)
+                self._add_hover_glow(rewind_btn)
         else: tk.Label(frame, text="Flawless Hand! The Grandmaster agreed with all of your decisions.", font=("Arial", 12, "bold"), bg=self.dark_bg_color, fg="lightgreen", wraplength=420, justify=tk.CENTER).pack(pady=40, padx=10)
 
         def next_hand(): dialog.destroy(); self.sandbox_mode = False; self._check_game_over()
@@ -9928,8 +10581,13 @@ class EuchreGame(tk.Tk):
             self.update_scoreboard(); self.start_new_hand()
 
         btn_frame = tk.Frame(dialog, bg=self.coach_bg_color); btn_frame.pack(pady=15)
-        if self.trainer_mistakes: tk.Button(btn_frame, text="↺ Replay Hand (Sandbox Mode)", font=("Arial", 12, "bold"), bg="#FF8C00", fg="black", command=replay_hand).pack(side=tk.LEFT, padx=10)
-        tk.Button(btn_frame, text="Next Hand →", font=("Arial", 12, "bold"), bg="lightgreen", fg="black", command=next_hand).pack(side=tk.LEFT, padx=10)
+        if self.trainer_mistakes:
+            replay_btn = tk.Button(btn_frame, text="↺ Replay Hand (Sandbox Mode)", font=("Arial", 12, "bold"), bg="#FF8C00", fg="black", command=replay_hand)
+            replay_btn.pack(side=tk.LEFT, padx=10)
+            self._add_hover_glow(replay_btn)
+        next_btn = tk.Button(btn_frame, text="Next Hand →", font=("Arial", 12, "bold"), bg="lightgreen", fg="black", command=next_hand)
+        next_btn.pack(side=tk.LEFT, padx=10)
+        self._add_hover_glow(next_btn)
 
     def _check_game_over(self):
         if self.active_drill != "Standard Match":
@@ -9972,6 +10630,7 @@ class EuchreGame(tk.Tk):
                     self.stats_tracker.apply_decay()
                 self.session_journal.games_completed += 1
                 self._record_session_event("game_complete", {"winner": "team1"})
+                self._flash_game_win(True)
                 messagebox.showinfo("Game Over", f"A WINNER IS YOU, {PLAYER_NAMES[0]}!"); self.team1_score = 0; self.team2_score = 0; self.sandbox_mode = False
             elif self.team2_score >= 10:
                 if not self.sandbox_mode: 
@@ -9979,6 +10638,7 @@ class EuchreGame(tk.Tk):
                     self.stats_tracker.apply_decay()
                 self.session_journal.games_completed += 1
                 self._record_session_event("game_complete", {"winner": "team2"})
+                self._flash_game_win(False)
                 messagebox.showinfo("Game Over", "Carry this L and try again"); self.team1_score = 0; self.team2_score = 0; self.sandbox_mode = False
         self.dealer_idx = (self.dealer_idx + 1) % 4; self.start_new_hand()
 

@@ -12,6 +12,7 @@ from BotEuchreGUI import (
     choose_iron_profile_move,
     iron_monte_play_iterations,
     normalize_profile_name,
+    omega_iron_monte_play_iterations,
     profile_checkpoint_paths,
 )
 from adhoc_headless_evaluation_gui import EvalGui
@@ -95,6 +96,13 @@ class TestIronProfiles(unittest.TestCase):
                 (100, 3, 800), (250, 4, 1000)):
             self.assertEqual(
                 iron_monte_play_iterations(base_iterations, completed_tricks),
+                expected,
+            )
+        for base_iterations, completed_tricks, expected in (
+                (1200, 0, 3600), (1200, 2, 7000),
+                (1200, 4, 7000), (500, 4, 6000)):
+            self.assertEqual(
+                omega_iron_monte_play_iterations(base_iterations, completed_tricks),
                 expected,
             )
 

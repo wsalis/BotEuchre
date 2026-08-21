@@ -37,7 +37,7 @@ from BotEuchreGUI import (
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
     is_sleuth_profile, IRON_MONTE_SEARCH_PROFILES,
-    iron_monte_play_iterations
+    iron_monte_play_iterations, omega_iron_monte_play_iterations
 )
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
