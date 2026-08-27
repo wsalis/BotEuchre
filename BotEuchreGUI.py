@@ -397,7 +397,8 @@ def league_tournament_state(league, job):
         "fingerprint_b": job["fingerprint_b"],
         "games_total": 2, "games_done": 0,
         "wins_a": 0, "wins_b": 0, "points_a": 0, "points_b": 0,
-        "hands": 0, "euchres_a": 0, "euchres_b": 0,
+        "hands": 0, "hand_wins_a": 0, "hand_wins_b": 0,
+        "euchres_a": 0, "euchres_b": 0,
         "loners_a": 0, "loners_b": 0,
         "loner_sweeps_a": 0, "loner_sweeps_b": 0,
         "paused": False, "started_at": time.time(),
@@ -859,6 +860,7 @@ def profile_checkpoint_paths(profile_name):
         "Iron Monte": [IRONCLAD_WEIGHTS_PATH],
         "Omega Iron Monte": [IRONCLAD_WEIGHTS_PATH],
         "IronChad": [IRONCLAD_WEIGHTS_PATH],
+        "Iron OmegaChad": [IRONCLAD_WEIGHTS_PATH],
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth Rush": [IRONCLAD_WEIGHTS_PATH],
@@ -989,10 +991,32 @@ def load_elo_standings(filename=TOURNAMENT_HISTORY_PATH, season_id="legacy"):
                     "fingerprint": identity.rsplit("@", 1)[-1]
                     if "@" in identity else "legacy",
                     "games": 0, "wins": 0, "losses": 0,
+                    "points": 0, "hand_wins": 0,
+                    "hands": 0, "euchres": 0, "loner_calls": 0,
+                    "loner_makes": 0, "stat_games": 0,
                     "opponents": [], "head_to_head": {},
                 })
                 entry["games"] += 1
                 entry["wins" if won else "losses"] += 1
+                suffix = "a" if identity == identity_a else "b"
+                try:
+                    entry["points"] += int(record[f"score_{suffix}"])
+                except (KeyError, TypeError, ValueError):
+                    pass
+                stat_keys = {
+                    "hands": "hands",
+                    "hand_wins": f"hand_wins_{suffix}",
+                    "euchres": f"euchres_{suffix}",
+                    "loner_calls": f"loners_{suffix}",
+                    "loner_makes": f"loner_sweeps_{suffix}",
+                }
+                if all(key in record for key in stat_keys.values()):
+                    for stat_name, record_key in stat_keys.items():
+                        try:
+                            entry[stat_name] += int(record[record_key])
+                        except (TypeError, ValueError):
+                            continue
+                    entry["stat_games"] += 1
                 opponent = identity_b if identity == identity_a else identity_a
                 entry["opponents"].append(opponent)
                 matchup = entry["head_to_head"].setdefault(
@@ -1009,6 +1033,12 @@ def load_elo_standings(filename=TOURNAMENT_HISTORY_PATH, season_id="legacy"):
             entry["wins"], games)
         entry["uncertainty"] = round(400.0 / math.sqrt(max(1, games)), 1)
         entry["provisional"] = games < 20
+        entry["caller_euchre_rate"] = (
+            entry["euchres"] / entry["hands"]
+            if entry["stat_games"] else None)
+        entry["loner_make_rate"] = (
+            entry["loner_makes"] / entry["loner_calls"]
+            if entry["loner_calls"] else None)
     return standings
 
 def load_league_standings(league_id, filename=TOURNAMENT_HISTORY_PATH):
@@ -1437,7 +1467,8 @@ AI_PROFILE_CHOICES = {
     "The MC (Pure MCTS)": "Uses information-set Monte Carlo tree search without a neural checkpoint.",
     "Iron Monte (Hybrid)": "Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play.",
     "Omega Iron Monte (Peak Hybrid)": "A tuned Iron Monte variant that deepens midgame and endgame search while staying fast enough for live play.",
-    "IronChad (Deep Ironclad)": "An Ironclad clone using exactly the same deep trick-play search budget as Iron Monte.",
+    "IronChad (Boosted Ironclad)": "Pure Ironclad policy with a deeper AlphaZero search budget for trick play.",
+    "Iron OmegaChad (Ultimate Ironclad)": "Pure Ironclad policy with heavily expanded bid, discard, and AlphaZero play search.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
     "Iron Sleuth Tempest (Aggressive Router)": "Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100).",
     "Iron Sleuth Hurricane (Aggressive Router)": "Iron Sleuth with a maximum test call threshold (call_margin=-0.130).",
@@ -1490,7 +1521,7 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
-    "Iron Monte", "Omega Iron Monte", "IronChad", "Iron Sleuth",
+    "Iron Monte", "Omega Iron Monte", "IronChad", "Iron OmegaChad", "Iron Sleuth",
     "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
@@ -1501,7 +1532,7 @@ NEURAL_PROFILES = {
     "Monte Prime", "Iron Solver", "Iron Oracle",
 }
 IRON_MONTE_SEARCH_PROFILES = {
-    "Iron Monte", "IronChad", "Iron Caller", "Iron Baller", "Omega Iron Monte"}
+    "Iron Monte", "Iron Caller", "Iron Baller", "Omega Iron Monte"}
 
 
 def iron_monte_play_iterations(base_iterations, completed_tricks):
@@ -1509,6 +1540,27 @@ def iron_monte_play_iterations(base_iterations, completed_tricks):
     if completed_tricks >= 3:
         iterations = max(iterations * 2, 800)
     return iterations
+
+
+def ironchad_play_iterations(base_iterations, completed_tricks):
+    return iron_monte_play_iterations(base_iterations, completed_tricks)
+
+
+def iron_omegachad_play_iterations(base_iterations, completed_tricks):
+    iterations = max(base_iterations * 4, 800)
+    if completed_tricks >= 2:
+        iterations = max(iterations * 2, 1600)
+    if completed_tricks >= 4:
+        iterations = max(iterations * 2, 3200)
+    return min(iterations, 12000)
+
+
+def iron_omegachad_bid_rollouts(base_rollouts):
+    return min(max(base_rollouts * 4, 400), 4000)
+
+
+def iron_omegachad_discard_determinizations(base_determinizations):
+    return min(max(base_determinizations * 4, 96), 512)
 
 
 def omega_iron_monte_play_iterations(base_iterations, completed_tricks):
@@ -1626,6 +1678,9 @@ def load_active_tournament_profiles(default_profiles=None):
     if not settings.get("ironchad_v1_seen", False):
         if "IronChad" in profiles and "IronChad" not in filtered:
             filtered.append("IronChad")
+    if not settings.get("iron_omegachad_v1_seen", False):
+        if "Iron OmegaChad" in profiles and "Iron OmegaChad" not in filtered:
+            filtered.append("Iron OmegaChad")
     if not settings.get("omega_iron_monte_v1_seen", False):
         if "Omega Iron Monte" in profiles and "Omega Iron Monte" not in filtered:
             filtered.append("Omega Iron Monte")
@@ -1737,7 +1792,7 @@ PROFILE_CATEGORIES = {
     "Unanimous Council": "Ensemble", "The Closer": "Router",
     "Risk Manager": "Router",
     "Iron Monte": "Hybrid", "Omega Iron Monte": "Hybrid",
-    "IronChad": "Hybrid", "Monte Prime": "Hybrid",
+    "IronChad": "Base Neural", "Iron OmegaChad": "Base Neural", "Monte Prime": "Hybrid",
     "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
     "Iron Sleuth": "Router",
     "Iron Sleuth Tempest": "Router",
@@ -3859,9 +3914,11 @@ class EuchreGame(tk.Tk):
         if self.tournament_state:
             defaults = {
                 "points_a": 0, "points_b": 0, "hands": 0,
+                "hand_wins_a": 0, "hand_wins_b": 0,
                 "euchres_a": 0, "euchres_b": 0,
                 "loners_a": 0, "loners_b": 0,
                 "loner_sweeps_a": 0, "loner_sweeps_b": 0,
+                "game_stat_start": {},
                 "paused": False, "started_at": time.time(),
                 "game_started_at": time.time(), "games": [],
             }
@@ -4280,7 +4337,8 @@ class EuchreGame(tk.Tk):
         if profile == "Risk Manager":
             return self.ironclad_brain
         if profile in {
-            *IRON_MONTE_SEARCH_PROFILES, "Iron Solver"}:
+            "IronChad", "Iron OmegaChad", *IRON_MONTE_SEARCH_PROFILES,
+            "Iron Solver"}:
             return self.ironclad_brain
         if profile in {
             "Iron Sleuth", "Iron Closer",
@@ -4551,8 +4609,17 @@ class EuchreGame(tk.Tk):
         if not HAS_TORCH or neural_brain is None:
             return [(idx, 100.0 / len(legal_indices)) for idx in legal_indices]
         if iterations is None:
-            iterations = (self.hint_neural_play_iters if player_idx == 0
-                          else self.table_neural_play_iters)
+            base_iterations = (self.hint_neural_play_iters if player_idx == 0
+                               else self.table_neural_play_iters)
+            iterations = base_iterations
+            if self.ai_profiles.get(str(player_idx)) == "IronChad":
+                completed_tricks = sim_state.team1_tricks + sim_state.team2_tricks
+                iterations = ironchad_play_iterations(
+                    base_iterations, completed_tricks)
+            elif self.ai_profiles.get(str(player_idx)) == "Iron OmegaChad":
+                completed_tricks = sim_state.team1_tricks + sim_state.team2_tricks
+                iterations = iron_omegachad_play_iterations(
+                    base_iterations, completed_tricks)
         if self.ai_profiles.get(str(player_idx)) == "Unanimous Council":
             iterations *= 2
 
@@ -5503,7 +5570,7 @@ class EuchreGame(tk.Tk):
 
     def show_elo_leaderboard(self):
         dialog, created = self._new_tool_window(
-            "elo_leaderboard", "Profile Elo Leaderboard", "1080x680")
+            "elo_leaderboard", "Profile Elo Leaderboard", "1280x680")
         if not created:
             return
         active_id = self.settings_store.data.get("elo_season_id", "legacy")
@@ -5534,12 +5601,19 @@ class EuchreGame(tk.Tk):
         tree = ttk.Treeview(
             dialog,
             columns=("rank", "profile", "rating", "record", "win_rate",
-                     "win_ci", "schedule", "uncertainty", "status"),
+                     "points", "hands", "hand_wins", "euchres", "euchre_rate", "loners",
+                     "loner_wins", "win_ci", "schedule", "uncertainty", "status"),
             show="headings")
         for column, title, width in [
-                ("rank", "Rank", 50), ("profile", "Profile / Checkpoint", 240),
+                ("rank", "Rank", 45), ("profile", "Profile / Checkpoint", 210),
                 ("rating", "Elo", 65), ("record", "W-L", 65),
-                ("win_rate", "Win %", 70), ("win_ci", "95% Win CI", 115),
+                ("win_rate", "Win %", 70),
+                ("points", "Points", 65),
+                ("hands", "Hands", 65), ("euchres", "Euchres", 70),
+                ("hand_wins", "Hands Won", 80),
+                ("euchre_rate", "Euchre/H", 80), ("loners", "Loners", 65),
+                ("loner_wins", "Loner Wins", 80),
+                ("win_ci", "95% Win CI", 115),
                 ("schedule", "SoS", 75),
                 ("uncertainty", "�", 65), ("status", "Status", 100)]:
             tree.heading(column, text=title)
@@ -5574,6 +5648,14 @@ class EuchreGame(tk.Tk):
                     f"{entry['rating']:.1f}",
                     f"{entry['wins']}-{entry['losses']}",
                     f"{entry['win_rate'] * 100:.1f}%",
+                    entry["points"],
+                    entry["hands"] if entry["stat_games"] else "-",
+                    entry["hand_wins"] if entry["stat_games"] else "-",
+                    entry["euchres"] if entry["stat_games"] else "-",
+                    (f"{entry['caller_euchre_rate'] * 100:.1f}%"
+                     if entry["caller_euchre_rate"] is not None else "-"),
+                    entry["loner_calls"] if entry["stat_games"] else "-",
+                    entry["loner_makes"] if entry["stat_games"] else "-",
                     f"{low * 100:.1f}-{high * 100:.1f}%",
                     f"{entry['schedule_strength']:.1f}",
                     f"{entry['uncertainty']:.0f}",
@@ -5581,7 +5663,8 @@ class EuchreGame(tk.Tk):
             if not standings:
                 tree.insert("", tk.END, values=(
                     "-", "No games in this season", "1500", "0-0", "0.0%",
-                    "0.0-100.0%", "-", "400", "Provisional"))
+                    "-", "-", "-", "-", "-", "-", "-", "0.0-100.0%",
+                    "-", "400", "Provisional"))
 
         def show_head_to_head(_event=None):
             selected = tree.selection()
@@ -5600,7 +5683,15 @@ class EuchreGame(tk.Tk):
                     f"{label} ({rating:.0f}): {record['wins']}-{record['losses']}")
             evidence_var.set(
                 f"Head-to-head for {entry['profile']}: "
-                + ("  |  ".join(parts) if parts else "No games"))
+                + ("  |  ".join(parts) if parts else "No games")
+                + (f"\nStats recorded for {entry['stat_games']}/{entry['games']} games: "
+                         f"{entry['points']} points, {entry['hands']} hands, "
+                         f"{entry['hand_wins']} hands won, {entry['euchres']} euchres, "
+                   f"{entry['loner_calls']} loner calls, "
+                   f"{entry['loner_makes']} loner wins."
+                   if entry["stat_games"] else
+                         f"\n{entry['points']} total points. Hand-level statistics are "
+                         "available for games recorded after this update."))
 
         selector.bind("<<ComboboxSelected>>", render_season)
         tree.bind("<<TreeviewSelect>>", show_head_to_head)
@@ -5915,12 +6006,35 @@ class EuchreGame(tk.Tk):
                 "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
                 "Hybrid: Sleuth score-aware policy with selective endgame deepening" if profile == "Iron Endgame Edge" else
                 "Hybrid: Sleuth policy with selective endgame deepening" if profile == "Iron Clutch" else
-                "Hybrid: Ironclad contract + guided MCTS play" if profile in {"Iron Monte", "IronChad"} else
+                "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
+                "Pure Ironclad policy + boosted AlphaZero play search" if profile == "IronChad" else
+                "Pure Ironclad policy + maximum bid, discard, and AlphaZero play search" if profile == "Iron OmegaChad" else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
                 f"{profile} checkpoint")
             call_margin, loner_margin = self._bid_style_margins(
                 0, 1 if self.game_state == "bidding_r1" else 2, profile)
+            play_iterations = self.hint_neural_play_iters
+            play_search_label = f"{play_iterations} iterations"
+            bid_rollouts = self.hint_neural_bid_rollouts
+            discard_determinizations = self.hint_neural_discard_determinizations
+            if profile == "IronChad":
+                completed_tricks = self.team1_tricks + self.team2_tricks
+                play_iterations = ironchad_play_iterations(
+                    play_iterations, completed_tricks)
+                play_search_label = (
+                    f"{play_iterations} iterations "
+                    f"(base {self.hint_neural_play_iters})")
+            elif profile == "Iron OmegaChad":
+                completed_tricks = self.team1_tricks + self.team2_tricks
+                play_iterations = iron_omegachad_play_iterations(
+                    play_iterations, completed_tricks)
+                bid_rollouts = iron_omegachad_bid_rollouts(bid_rollouts)
+                discard_determinizations = iron_omegachad_discard_determinizations(
+                    discard_determinizations)
+                play_search_label = (
+                    f"{play_iterations} iterations "
+                    f"(base {self.hint_neural_play_iters})")
             copycat = "\nCopycat scores: " + ", ".join(
                 f"{name} {score:.1f}"
                 for name, score in self.copycat_style_scores.items())
@@ -5928,9 +6042,9 @@ class EuchreGame(tk.Tk):
                 f"{profile}  [{self._profile_badge(profile)}]\n\n"
                 f"{description}\n\n"
                 f"Engine: {route}\n"
-                f"Play search: {self.hint_neural_play_iters} iterations\n"
-                f"Bid search: {self.hint_neural_bid_rollouts} rollouts\n"
-                f"Discard search: {self.hint_neural_discard_determinizations} deals\n"
+                f"Play search: {play_search_label}\n"
+                f"Bid search: {bid_rollouts} rollouts\n"
+                f"Discard search: {discard_determinizations} deals\n"
                 f"Current call margin: {call_margin:+.2f}\n"
                 f"Current loner margin: {loner_margin:+.2f}"
                 f"{copycat if profile == 'Copycat' else ''}"))
@@ -6437,9 +6551,11 @@ class EuchreGame(tk.Tk):
                 "games_total": games_var.get(), "games_done": 0,
                 "wins_a": 0, "wins_b": 0,
                 "points_a": 0, "points_b": 0, "hands": 0,
+                "hand_wins_a": 0, "hand_wins_b": 0,
                 "euchres_a": 0, "euchres_b": 0,
                 "loners_a": 0, "loners_b": 0,
                 "loner_sweeps_a": 0, "loner_sweeps_b": 0,
+                "game_stat_start": {},
                 "paused": False, "started_at": time.time(),
                 "game_started_at": time.time(), "games": [],
                 "randomize_each_game": randomize_each_game_var.get(),
@@ -6980,6 +7096,15 @@ class EuchreGame(tk.Tk):
     def _finish_tournament_game(self):
         tournament = self.tournament_state
         team_a_won = self.team1_score >= 10
+        stat_keys = (
+            "hands", "hand_wins_a", "hand_wins_b", "euchres_a",
+            "euchres_b", "loners_a", "loners_b", "loner_sweeps_a",
+            "loner_sweeps_b")
+        stat_start = tournament.get("game_stat_start", {})
+        game_stats = {
+            key: max(0, int(tournament.get(key, 0)) - int(stat_start.get(key, 0)))
+            for key in stat_keys
+        }
         tournament["games_done"] += 1
         tournament["wins_a" if team_a_won else "wins_b"] += 1
         tournament["points_a"] += self.team1_score
@@ -7005,6 +7130,7 @@ class EuchreGame(tk.Tk):
             "league_id": tournament.get("league_id"),
             "league_job_id": tournament.get("league_job_id"),
             "mirror_phase": tournament.get("mirror_phase"),
+            **game_stats,
         }
         standings_before = load_elo_standings(
             TOURNAMENT_HISTORY_PATH, game_record["season_id"])
@@ -7031,6 +7157,8 @@ class EuchreGame(tk.Tk):
             "type": "game", "timestamp": time.time(),
             "profile_a": tournament["profile_a"],
             "profile_b": tournament["profile_b"], **game_record})
+        tournament["game_stat_start"] = {
+            key: int(tournament.get(key, 0)) for key in stat_keys}
         if tournament["games_done"] >= tournament["games_total"]:
             completed = copy.deepcopy(tournament)
             completed.update({
@@ -8297,6 +8425,8 @@ class EuchreGame(tk.Tk):
         profile = self.ai_profiles.get(str(player_idx), "Arbiter")
         if profile == "Unanimous Council":
             rollouts *= 2
+        elif profile == "Iron OmegaChad":
+            rollouts = iron_omegachad_bid_rollouts(rollouts)
 
         call_margin, loner_margin = self._bid_style_margins(
             player_idx, round_num, profile)
@@ -8639,6 +8769,9 @@ class EuchreGame(tk.Tk):
                                 else self.table_neural_discard_determinizations)
         if self.ai_profiles.get(str(player_idx)) == "Unanimous Council":
             determinizations *= 2
+        elif self.ai_profiles.get(str(player_idx)) == "Iron OmegaChad":
+            determinizations = iron_omegachad_discard_determinizations(
+                determinizations)
 
         hand = list(self.hands[player_idx])
         hand_after_pickup = hand + [self.up_card]
@@ -10469,6 +10602,7 @@ class EuchreGame(tk.Tk):
         if self.tournament_state is not None:
             tournament = self.tournament_state
             tournament["hands"] += 1
+            tournament["hand_wins_a" if team1_won else "hand_wins_b"] += 1
             if caller_team == 1 and self.team1_tricks < 3:
                 tournament["euchres_b"] += 1
             elif caller_team == 2 and self.team2_tricks < 3:

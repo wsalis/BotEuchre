@@ -58,6 +58,7 @@ LAB_SETTINGS_DEFAULTS = {
     "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
     "hybrid_profiles_v1_seen": False,
     "ironchad_v1_seen": False,
+    "iron_omegachad_v1_seen": False,
     "iron_oracle_v1_seen": False,
     "iron_profiles_v1_seen": False,
     "shared_queue_enabled": False,
@@ -689,6 +690,10 @@ class EvalGui(tk.Tk):
             if "IronChad" in self.all_profiles and "IronChad" not in selected:
                 selected.append("IronChad")
             self.lab_settings["ironchad_v1_seen"] = True
+        if not self.lab_settings.get("iron_omegachad_v1_seen", False):
+            if "Iron OmegaChad" in self.all_profiles and "Iron OmegaChad" not in selected:
+                selected.append("Iron OmegaChad")
+            self.lab_settings["iron_omegachad_v1_seen"] = True
         if not self.lab_settings.get("iron_oracle_v1_seen", False):
             if "Iron Oracle" in self.all_profiles and "Iron Oracle" not in selected:
                 selected.append("Iron Oracle")

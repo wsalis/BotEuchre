@@ -37,7 +37,9 @@ from BotEuchreGUI import (
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
     is_sleuth_profile, IRON_MONTE_SEARCH_PROFILES,
-    iron_monte_play_iterations, omega_iron_monte_play_iterations
+    iron_monte_play_iterations, ironchad_play_iterations,
+    iron_omegachad_bid_rollouts, iron_omegachad_discard_determinizations,
+    iron_omegachad_play_iterations, omega_iron_monte_play_iterations
 )
 
 ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
@@ -380,6 +382,8 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
         profile_name = sleuth_base_profile
     if profile_name == "Hoyle":
         return "Arbiter"
+    if profile_name in {"IronChad", "Iron OmegaChad"}:
+        return "Ironclad"
     if profile_name in {
             *IRON_MONTE_SEARCH_PROFILES, "Iron Solver", "Iron Oracle"}:
         return "Ironclad"
@@ -621,6 +625,8 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         rollouts = budget_for_net(bid_rollouts, net_id)
         if profile == "Unanimous Council":
             rollouts *= 2
+        elif profile == "Iron OmegaChad":
+            rollouts = iron_omegachad_bid_rollouts(rollouts)
         call_margin, loner_margin = headless_bid_margins(
             profile, seat, round_num, dealer_idx, t1_score, t2_score)
         if profile == "Iron Oracle":
@@ -669,10 +675,15 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             discard_card = dealer_hand[_hoyle_discard_index(dealer_hand, trump_suit)]
         else:
             dealer_brain = brain_for_seat(dealer_idx, caller_idx)
+            active_discard_determinizations = discard_determinizations
+            if dealer_profile == "Iron OmegaChad":
+                active_discard_determinizations = (
+                    iron_omegachad_discard_determinizations(
+                        active_discard_determinizations))
             ranked_discards = choose_dealer_discard(
                 dealer_hand, trump_suit, caller_idx, is_loner,
                 up_card, dealer_idx, t1_score, t2_score, nn_eval_for(dealer_brain),
-                determinizations=discard_determinizations,
+                determinizations=active_discard_determinizations,
                 known_hands=None,
                 return_ranked=True)
             discard_card = (ranked_discards[-1][0] if dealer_profile == "Saboteur"
@@ -719,7 +730,15 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             chosen_move = sim.get_heuristic_move()
         else:
             if not equalize_iterations:
-                if active_profile in IRON_MONTE_SEARCH_PROFILES:
+                if active_profile == "IronChad":
+                    active_iterations = ironchad_play_iterations(
+                        active_iterations,
+                        sim.team1_tricks + sim.team2_tricks)
+                elif active_profile == "Iron OmegaChad":
+                    active_iterations = iron_omegachad_play_iterations(
+                        active_iterations,
+                        sim.team1_tricks + sim.team2_tricks)
+                elif active_profile in IRON_MONTE_SEARCH_PROFILES:
                     # These profiles share the same deeper Ironclad-guided play
                     # search regime as Iron Monte, with a late-game bump.
                     active_iterations = iron_monte_play_iterations(

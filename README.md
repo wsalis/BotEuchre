@@ -206,7 +206,7 @@ intentionally omitted from this public README.
 | Wildcard | Chooses Arbiter, Ironclad, or Kyle once per hand and keeps that identity for the full hand. |
 | The MC | Uses information-set Monte Carlo tree search without a neural checkpoint. |
 | Iron Monte | Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play. |
-| IronChad | An Ironclad clone using exactly the same deep trick-play search budget as Iron Monte. |
+| IronChad | Pure Ironclad policy with a deeper AlphaZero trick-play search budget. |
 | Iron Sleuth | Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied. |
 | Iron Sleuth Tempest | Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100). |
 | Iron Sleuth Hurricane | Iron Sleuth with a maximum test call threshold (call_margin=-0.130). |
