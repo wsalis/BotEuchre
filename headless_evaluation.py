@@ -36,7 +36,8 @@ from BotEuchreGUI import (
     run_auction, legal_bid_actions, choose_iron_oracle_bid,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
-    is_sleuth_profile, IRON_MONTE_SEARCH_PROFILES,
+    is_sleuth_profile, is_omegachad_profile, omegachad_loner_margin,
+    IRON_MONTE_SEARCH_PROFILES,
     iron_monte_play_iterations, ironchad_play_iterations,
     iron_omegachad_bid_rollouts, iron_omegachad_discard_determinizations,
     iron_omegachad_play_iterations, omega_iron_monte_play_iterations
@@ -382,7 +383,7 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
         profile_name = sleuth_base_profile
     if profile_name == "Hoyle":
         return "Arbiter"
-    if profile_name in {"IronChad", "Iron OmegaChad"}:
+    if profile_name == "IronChad" or is_omegachad_profile(profile_name):
         return "Ironclad"
     if profile_name in {
             *IRON_MONTE_SEARCH_PROFILES, "Iron Solver", "Iron Oracle"}:
@@ -422,6 +423,9 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
         profile_name = sleuth_base_profile
     own_score = t1_score if seat in (0, 2) else t2_score
     opponent_score = t2_score if seat in (0, 2) else t1_score
+    calibrated_loner_margin = omegachad_loner_margin(profile_name)
+    if calibrated_loner_margin is not None:
+        return 0.0, calibrated_loner_margin
     if profile_name == "Iron Sleuth":
         return -0.025 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Sleuth Tempest":
@@ -625,7 +629,7 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         rollouts = budget_for_net(bid_rollouts, net_id)
         if profile == "Unanimous Council":
             rollouts *= 2
-        elif profile == "Iron OmegaChad":
+        elif is_omegachad_profile(profile):
             rollouts = iron_omegachad_bid_rollouts(rollouts)
         call_margin, loner_margin = headless_bid_margins(
             profile, seat, round_num, dealer_idx, t1_score, t2_score)
@@ -676,7 +680,7 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
         else:
             dealer_brain = brain_for_seat(dealer_idx, caller_idx)
             active_discard_determinizations = discard_determinizations
-            if dealer_profile == "Iron OmegaChad":
+            if is_omegachad_profile(dealer_profile):
                 active_discard_determinizations = (
                     iron_omegachad_discard_determinizations(
                         active_discard_determinizations))
@@ -734,7 +738,7 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
                     active_iterations = ironchad_play_iterations(
                         active_iterations,
                         sim.team1_tricks + sim.team2_tricks)
-                elif active_profile == "Iron OmegaChad":
+                elif is_omegachad_profile(active_profile):
                     active_iterations = iron_omegachad_play_iterations(
                         active_iterations,
                         sim.team1_tricks + sim.team2_tricks)

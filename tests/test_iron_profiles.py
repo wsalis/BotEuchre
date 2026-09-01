@@ -9,6 +9,8 @@ from BotEuchreGUI import (
     Card,
     EuchreGame,
     HYBRID_MCTS_PROFILES,
+    OMEGACHAD_LONER_MARGIN_PROFILES,
+    OMEGACHAD_LONER_MARGIN_VALUES,
     _continue_auction_by_policy,
     _format_ai_comparison_row,
     advance_turn_after_play,
@@ -190,6 +192,25 @@ class TestIronProfiles(unittest.TestCase):
             headless_profile_brain("Iron OmegaChad", 0, 0, 0),
             "Ironclad",
         )
+
+    def test_omegachad_loner_profiles_preserve_omega_compute_and_normal_calls(self):
+        self.assertEqual(len(OMEGACHAD_LONER_MARGIN_PROFILES), 8)
+        for profile_name, margin in zip(
+                OMEGACHAD_LONER_MARGIN_PROFILES,
+                OMEGACHAD_LONER_MARGIN_VALUES):
+            self.assertEqual(normalize_profile_name(profile_name), profile_name)
+            self.assertEqual(
+                profile_checkpoint_paths(profile_name),
+                profile_checkpoint_paths("Iron OmegaChad"),
+            )
+            self.assertEqual(
+                headless_profile_brain(profile_name, 0, 0, 0),
+                "Ironclad",
+            )
+            self.assertEqual(
+                headless_bid_margins(profile_name, 0, 1, 3, 0, 0),
+                (0.0, margin),
+            )
 
     def test_new_profiles_are_normalized(self):
         for profile_name in (

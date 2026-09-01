@@ -25,7 +25,8 @@ from tkinter import filedialog, messagebox, ttk
 from BotEuchreGUI import (
     DATA_SCHEMA_VERSION, HEADLESS_TOURNAMENT_PROFILES, HELP_TOPICS,
     NODE_ADHOC_HISTORY_PATH, NODE_DEAL_LEDGER_PATH, NODE_ID, NODE_STATE_DIR,
-    SLEUTH_FINALIST_PROFILES, SLEUTH_MARGIN_OFFSET_PROFILES,
+    OMEGACHAD_LONER_MARGIN_PROFILES, SLEUTH_FINALIST_PROFILES,
+    SLEUTH_MARGIN_OFFSET_PROFILES,
     atomic_write_json, load_versioned_list, load_versioned_mapping,
     prepare_node_state, save_versioned_list)
 from adhoc_headless_evaluation import (
@@ -59,6 +60,7 @@ LAB_SETTINGS_DEFAULTS = {
     "hybrid_profiles_v1_seen": False,
     "ironchad_v1_seen": False,
     "iron_omegachad_v1_seen": False,
+    "omegachad_loner_v1_seen": False,
     "iron_oracle_v1_seen": False,
     "iron_profiles_v1_seen": False,
     "shared_queue_enabled": False,
@@ -254,6 +256,63 @@ def _shared_queue_retry_failed(path):
             ).rowcount
     _run_with_sqlite_retry(operation)
     return count
+
+
+def _shared_queue_release_running(path, job_ids, force=False):
+    # Unlike retry/purge, this keeps created_at and attempts so the job holds its queue slot.
+    counts = {"released": 0, "live_skipped": 0, "not_running": 0}
+    if not job_ids:
+        return counts
+    _shared_queue_init(path)
+    ids = tuple(job_ids)
+    placeholders = ",".join("?" for _ in ids)
+
+    def operation():
+        nonlocal counts
+        counts = {"released": 0, "live_skipped": 0, "not_running": 0}
+        now = time.time()
+        with _sqlite_connect(path) as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                f"""
+                SELECT id, status, lease_expires_at
+                FROM queue_jobs
+                WHERE id IN ({placeholders})
+                """,
+                ids,
+            ).fetchall()
+            running = [row for row in rows if row["status"] == "running"]
+            counts["not_running"] = len(rows) - len(running)
+            live = {
+                row["id"] for row in running
+                if row["lease_expires_at"] is not None
+                and row["lease_expires_at"] >= now
+            }
+            if force:
+                targets = [row["id"] for row in running]
+            else:
+                targets = [row["id"] for row in running if row["id"] not in live]
+                counts["live_skipped"] = len(live)
+            if targets:
+                target_placeholders = ",".join("?" for _ in targets)
+                counts["released"] = conn.execute(
+                    f"""
+                    UPDATE queue_jobs
+                    SET status='queued',
+                        started_at=NULL,
+                        finished_at=NULL,
+                        return_code=NULL,
+                        failure_reason=NULL,
+                        lease_owner=NULL,
+                        lease_expires_at=NULL
+                    WHERE id IN ({target_placeholders})
+                      AND status='running'
+                    """,
+                    tuple(targets),
+                ).rowcount
+            conn.commit()
+    _run_with_sqlite_retry(operation)
+    return counts
 
 
 def _shared_queue_claim_next(path, owner_id, lease_seconds):
@@ -694,6 +753,11 @@ class EvalGui(tk.Tk):
             if "Iron OmegaChad" in self.all_profiles and "Iron OmegaChad" not in selected:
                 selected.append("Iron OmegaChad")
             self.lab_settings["iron_omegachad_v1_seen"] = True
+        if not self.lab_settings.get("omegachad_loner_v1_seen", False):
+            for profile in OMEGACHAD_LONER_MARGIN_PROFILES:
+                if profile in self.all_profiles and profile not in selected:
+                    selected.append(profile)
+            self.lab_settings["omegachad_loner_v1_seen"] = True
         if not self.lab_settings.get("iron_oracle_v1_seen", False):
             if "Iron Oracle" in self.all_profiles and "Iron Oracle" not in selected:
                 selected.append("Iron Oracle")
@@ -1217,6 +1281,10 @@ class EvalGui(tk.Tk):
             queue_frame, text="Remove", command=self.remove_selected_job).pack(
                 side=tk.RIGHT, padx=(8, 0))
         ttk.Button(
+            queue_frame, text="Release Running",
+            command=self.release_selected_running_jobs).pack(
+                side=tk.RIGHT, padx=(8, 0))
+        ttk.Button(
             queue_frame, text="Retry Failed", command=self.retry_failed_jobs).pack(
                 side=tk.RIGHT, padx=(8, 0))
         ttk.Button(
@@ -1721,6 +1789,63 @@ class EvalGui(tk.Tk):
             self.jobs = [job for job in self.jobs if job["id"] not in selected_ids]
             save_job_queue(self.jobs)
         self.refresh_job_queue()
+
+    def release_selected_running_jobs(self):
+        selected = self.job_tree.selection()
+        if not selected:
+            messagebox.showinfo(
+                "Release Running",
+                "Select the stuck running job(s) in the queue list first.")
+            return
+        selected_ids = list(selected)
+        if self.process is not None and self.current_job_id in set(selected_ids):
+            messagebox.showwarning(
+                "Release Running",
+                "That job is actually running on this computer.\n\n"
+                "Stop it before releasing it back to the queue.")
+            return
+
+        if self._shared_queue_enabled():
+            path = self._shared_queue_path()
+            result = _shared_queue_release_running(path, selected_ids)
+            if result["live_skipped"]:
+                force = messagebox.askyesno(
+                    "Release Running",
+                    f"{result['live_skipped']} selected job(s) still hold a live lease, "
+                    "so another computer may genuinely be running them.\n\n"
+                    "Force them back to queued anyway?")
+                if force:
+                    forced = _shared_queue_release_running(
+                        path, selected_ids, force=True)
+                    result["released"] += forced["released"]
+                    result["live_skipped"] = 0
+            self.jobs = _shared_queue_list(path)
+        else:
+            released = 0
+            for job in self.jobs:
+                if job["id"] in set(selected_ids) and job.get("status") == "running":
+                    job["status"] = "queued"
+                    for key in ("started_at", "finished_at",
+                                "return_code", "failure_reason"):
+                        job.pop(key, None)
+                    released += 1
+            if released:
+                save_job_queue(self.jobs)
+            result = {"released": released, "live_skipped": 0}
+
+        if self.process is None and self.current_job_id in set(selected_ids):
+            self.current_job_id = None
+        self.refresh_job_queue()
+
+        if result["released"]:
+            message = (f"Reset {result['released']} running job(s) to queued.\n\n"
+                       "They keep their original queue position and can be "
+                       "claimed again by any node.")
+        elif result["live_skipped"]:
+            message = "No jobs released. The selected job(s) still hold a live lease."
+        else:
+            message = "No running jobs were selected."
+        messagebox.showinfo("Release Running", message)
 
     def purge_queue(self):
         if self._shared_queue_enabled():

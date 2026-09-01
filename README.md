@@ -206,7 +206,10 @@ intentionally omitted from this public README.
 | Wildcard | Chooses Arbiter, Ironclad, or Kyle once per hand and keeps that identity for the full hand. |
 | The MC | Uses information-set Monte Carlo tree search without a neural checkpoint. |
 | Iron Monte | Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play. |
+| Omega Iron Monte | A tuned Iron Monte variant with deeper midgame and endgame search. |
 | IronChad | Pure Ironclad policy with a deeper AlphaZero trick-play search budget. |
+| Iron OmegaChad | Pure Ironclad policy with heavily expanded bid, discard, and AlphaZero play search. |
+| Iron OmegaChad Loner +0.05 through +0.19 | OmegaChad variants with identical normal-call and play behavior, calibrated by their loner-selection margin. |
 | Iron Sleuth | Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied. |
 | Iron Sleuth Tempest | Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100). |
 | Iron Sleuth Hurricane | Iron Sleuth with a maximum test call threshold (call_margin=-0.130). |
@@ -226,6 +229,8 @@ intentionally omitted from this public README.
 
 The adjustable `Iron Sleuth +0.020` through `Iron Sleuth +0.300` family provides
 additional variants with controlled bid-margin offsets for aggression frontier testing.
+The `Iron OmegaChad Loner +0.05` through `Iron OmegaChad Loner +0.19` family
+keeps the base OmegaChad behavior while sweeping loner-selection margins.
 
 ## Playing and Coaching
 

@@ -24,6 +24,8 @@ import zipfile
 import subprocess
 import sys
 import uuid
+import logging
+from logging.handlers import RotatingFileHandler
 from contextlib import contextmanager
 from itertools import combinations
 
@@ -68,6 +70,22 @@ TOURNAMENT_HISTORY_PATH = os.path.join(
     SCRIPT_DIR, "bot_euchre_tournament_history.jsonl")
 LEAGUE_STATE_PATH = os.path.join(SCRIPT_DIR, "bot_euchre_league_state.json")
 DIAGNOSTIC_DIR = os.path.join(SCRIPT_DIR, "bot_euchre_diagnostics")
+LOG_PATH = os.path.join(DIAGNOSTIC_DIR, "bot_euchre.log")
+
+def _build_logger():
+    logger = logging.getLogger("bot_euchre")
+    logger.setLevel(logging.INFO)
+    if not logger.handlers:
+        os.makedirs(DIAGNOSTIC_DIR, exist_ok=True)
+        handler = RotatingFileHandler(
+            LOG_PATH, maxBytes=2_000_000, backupCount=3, encoding="utf-8")
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s %(levelname)s %(name)s: %(message)s"))
+        logger.addHandler(handler)
+        logger.propagate = False
+    return logger
+
+LOGGER = _build_logger()
 SEED_LIBRARY_PATH = os.path.join(
     NODE_STATE_DIR, "bot_euchre_seed_library.json")
 ADHOC_HISTORY_PATH = os.path.join(SCRIPT_DIR, "adhoc_evaluation_history.jsonl")
@@ -823,6 +841,11 @@ SLEUTH_FINALIST_PROFILES = ("Iron Caller", "Iron Baller")
 SLEUTH_MARGIN_OFFSET_VALUES = tuple(step / 100.0 for step in range(2, 31, 2))
 SLEUTH_MARGIN_OFFSET_PROFILES = tuple(
     f"Iron Sleuth +{offset:.3f}" for offset in SLEUTH_MARGIN_OFFSET_VALUES)
+OMEGACHAD_LONER_MARGIN_VALUES = tuple(
+    step / 100.0 for step in range(5, 20, 2))
+OMEGACHAD_LONER_MARGIN_PROFILES = tuple(
+    f"Iron OmegaChad Loner +{margin:.2f}"
+    for margin in OMEGACHAD_LONER_MARGIN_VALUES)
 
 
 def parse_sleuth_margin_adjustment(profile_name):
@@ -846,6 +869,23 @@ def is_sleuth_profile(profile_name):
         return True
     base_profile, _ = parse_sleuth_margin_adjustment(profile_name)
     return base_profile is not None
+
+
+def omegachad_loner_margin(profile_name):
+    prefix = "Iron OmegaChad Loner +"
+    name = str(profile_name or "").strip()
+    if not name.startswith(prefix):
+        return None
+    try:
+        margin = float(name[len(prefix):])
+    except ValueError:
+        return None
+    return margin if margin in OMEGACHAD_LONER_MARGIN_VALUES else None
+
+
+def is_omegachad_profile(profile_name):
+    return (profile_name == "Iron OmegaChad"
+            or omegachad_loner_margin(profile_name) is not None)
 
 def profile_checkpoint_paths(profile_name):
     checkpoint_groups = {
@@ -892,6 +932,8 @@ def profile_checkpoint_paths(profile_name):
     }
     base_profile, _ = parse_sleuth_margin_adjustment(profile_name)
     if base_profile is not None:
+        return [IRONCLAD_WEIGHTS_PATH]
+    if omegachad_loner_margin(profile_name) is not None:
         return [IRONCLAD_WEIGHTS_PATH]
     return list(checkpoint_groups.get(profile_name, []))
 
@@ -1491,6 +1533,11 @@ for offset in SLEUTH_MARGIN_OFFSET_VALUES:
     AI_PROFILE_CHOICES[f"{profile_name} (Bid Margin Offset)"] = (
         "Iron Sleuth with extra call aggression by reducing call_margin by "
         f"{offset:.3f} from the base Sleuth margin.")
+for margin in OMEGACHAD_LONER_MARGIN_VALUES:
+    profile_name = f"Iron OmegaChad Loner +{margin:.2f}"
+    AI_PROFILE_CHOICES[f"{profile_name} (Loner Calibration)"] = (
+        "Iron OmegaChad with identical normal-call and play behavior, but a "
+        f"+{margin:.2f} loner selection margin.")
 
 LEGACY_PROFILE_FALLBACKS = {
     "Noob": "Arbiter",
@@ -1521,7 +1568,8 @@ NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
-    "Iron Monte", "Omega Iron Monte", "IronChad", "Iron OmegaChad", "Iron Sleuth",
+    "Iron Monte", "Omega Iron Monte", "IronChad", "Iron OmegaChad",
+    *OMEGACHAD_LONER_MARGIN_PROFILES, "Iron Sleuth",
     "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
     "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
     "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
@@ -1681,6 +1729,10 @@ def load_active_tournament_profiles(default_profiles=None):
     if not settings.get("iron_omegachad_v1_seen", False):
         if "Iron OmegaChad" in profiles and "Iron OmegaChad" not in filtered:
             filtered.append("Iron OmegaChad")
+    if not settings.get("omegachad_loner_v1_seen", False):
+        for profile in OMEGACHAD_LONER_MARGIN_PROFILES:
+            if profile in profiles and profile not in filtered:
+                filtered.append(profile)
     if not settings.get("omega_iron_monte_v1_seen", False):
         if "Omega Iron Monte" in profiles and "Omega Iron Monte" not in filtered:
             filtered.append("Omega Iron Monte")
@@ -1807,6 +1859,8 @@ PROFILE_CATEGORIES = {
     "Iron Endgame Edge": "Hybrid",
     "Wildcard": "Learner", "The MC": "Pure MCTS",
 }
+for profile in OMEGACHAD_LONER_MARGIN_PROFILES:
+    PROFILE_CATEGORIES[profile] = "Base Neural"
 
 
 def _format_ai_comparison_row(profile, recommendation, confidence=None):
@@ -2858,14 +2912,16 @@ class StatsTracker:
                 with open(self.filename, 'r') as f:
                     loaded = json.load(f)
                     default_stats.update(loaded)
-            except Exception: pass
+            except Exception:
+                LOGGER.exception("Failed to load stats file %s", self.filename)
         return default_stats
 
     def save(self):
         try:
             with open(self.filename, 'w') as f:
                 json.dump(self.stats, f, indent=4)
-        except Exception: pass
+        except Exception:
+            LOGGER.exception("Failed to save stats file %s", self.filename)
 
     def record_event(self, event_key, amount=1):
         if event_key in self.stats:
@@ -4336,9 +4392,7 @@ class EuchreGame(tk.Tk):
             return self.unanimous_council_brain
         if profile == "Risk Manager":
             return self.ironclad_brain
-        if profile in {
-            "IronChad", "Iron OmegaChad", *IRON_MONTE_SEARCH_PROFILES,
-            "Iron Solver"}:
+        if profile in {"IronChad", *IRON_MONTE_SEARCH_PROFILES, "Iron Solver"} or is_omegachad_profile(profile):
             return self.ironclad_brain
         if profile in {
             "Iron Sleuth", "Iron Closer",
@@ -4616,7 +4670,7 @@ class EuchreGame(tk.Tk):
                 completed_tricks = sim_state.team1_tricks + sim_state.team2_tricks
                 iterations = ironchad_play_iterations(
                     base_iterations, completed_tricks)
-            elif self.ai_profiles.get(str(player_idx)) == "Iron OmegaChad":
+            elif is_omegachad_profile(self.ai_profiles.get(str(player_idx))):
                 completed_tricks = sim_state.team1_tricks + sim_state.team2_tricks
                 iterations = iron_omegachad_play_iterations(
                     base_iterations, completed_tricks)
@@ -6008,7 +6062,7 @@ class EuchreGame(tk.Tk):
                 "Hybrid: Sleuth policy with selective endgame deepening" if profile == "Iron Clutch" else
                 "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
                 "Pure Ironclad policy + boosted AlphaZero play search" if profile == "IronChad" else
-                "Pure Ironclad policy + maximum bid, discard, and AlphaZero play search" if profile == "Iron OmegaChad" else
+                "Pure Ironclad policy + maximum bid, discard, and AlphaZero play search" if is_omegachad_profile(profile) else
                 "Derived neural routing" if profile not in {
                     "Arbiter", "Ironclad", "Kyle"} else
                 f"{profile} checkpoint")
@@ -6025,7 +6079,7 @@ class EuchreGame(tk.Tk):
                 play_search_label = (
                     f"{play_iterations} iterations "
                     f"(base {self.hint_neural_play_iters})")
-            elif profile == "Iron OmegaChad":
+            elif is_omegachad_profile(profile):
                 completed_tricks = self.team1_tricks + self.team2_tricks
                 play_iterations = iron_omegachad_play_iterations(
                     play_iterations, completed_tricks)
@@ -8378,6 +8432,9 @@ class EuchreGame(tk.Tk):
     def _bid_style_margins(self, player_idx, round_num, profile):
         own_score, opponent_score = self._scores_for_player(player_idx)
         score_gap = own_score - opponent_score
+        calibrated_loner_margin = omegachad_loner_margin(profile)
+        if calibrated_loner_margin is not None:
+            return 0.0, calibrated_loner_margin
         sleuth_base_profile, sleuth_margin_offset = parse_sleuth_margin_adjustment(
             profile)
         if sleuth_base_profile is not None:
@@ -8425,7 +8482,7 @@ class EuchreGame(tk.Tk):
         profile = self.ai_profiles.get(str(player_idx), "Arbiter")
         if profile == "Unanimous Council":
             rollouts *= 2
-        elif profile == "Iron OmegaChad":
+        elif is_omegachad_profile(profile):
             rollouts = iron_omegachad_bid_rollouts(rollouts)
 
         call_margin, loner_margin = self._bid_style_margins(
@@ -8492,6 +8549,7 @@ class EuchreGame(tk.Tk):
             suit, is_loner = bid_action_details(best_action)
             return ("Call", suit, is_loner, confidence, est_points, is_stuck)
         except Exception:
+            LOGGER.exception("Bid MCTS failed for player %s; falling back to pass/call", player_idx)
             return ("Pass" if not is_stuck else "Call", suits_to_check[0], False, 100.0, 2.0, is_stuck)
 
     def _run_bid_sim_raw(self, player_idx, suit, round_num, simulations_per_suit):
@@ -8769,7 +8827,7 @@ class EuchreGame(tk.Tk):
                                 else self.table_neural_discard_determinizations)
         if self.ai_profiles.get(str(player_idx)) == "Unanimous Council":
             determinizations *= 2
-        elif self.ai_profiles.get(str(player_idx)) == "Iron OmegaChad":
+        elif is_omegachad_profile(self.ai_profiles.get(str(player_idx))):
             determinizations = iron_omegachad_discard_determinizations(
                 determinizations)
 
@@ -8793,6 +8851,8 @@ class EuchreGame(tk.Tk):
                 return [(hand.index(card), score) for card, score in result]
             return hand.index(result)
         except Exception:
+            LOGGER.exception(
+                "Discard search failed for player %s; falling back to heuristic", player_idx)
             index = self.get_smart_discard_index(player_idx)
             return [(index, None)] if return_ranked else index
 
