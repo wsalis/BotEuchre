@@ -823,14 +823,8 @@ def build_provenance_manifest(checkpoint_paths=None, configuration=None,
 
 SLEUTH_ADJUSTABLE_BASE_PROFILES = (
     "Iron Sleuth",
-    "Iron Sleuth Tempest",
-    "Iron Sleuth Hurricane",
-    "Iron Sleuth Cyclone",
-    "Iron Sleuth Supercell",
-    "Iron Sleuth Hypercell",
-    "Iron Sleuth Firestorm",
-    "Iron Sleuth Cataclysm",
 )
+# Finalists are stored as bid-margin offsets so the sweep tuning stays intact.
 SLEUTH_FINALIST_ALIASES = {
     "Iron Caller": "Iron Sleuth +0.100",
     "Iron Baller": "Iron Sleuth +0.160",
@@ -838,11 +832,8 @@ SLEUTH_FINALIST_ALIASES = {
     "Iron Sleuth Baller": "Iron Sleuth +0.160",
 }
 SLEUTH_FINALIST_PROFILES = ("Iron Caller", "Iron Baller")
-SLEUTH_MARGIN_OFFSET_VALUES = tuple(step / 100.0 for step in range(2, 31, 2))
-SLEUTH_MARGIN_OFFSET_PROFILES = tuple(
-    f"Iron Sleuth +{offset:.3f}" for offset in SLEUTH_MARGIN_OFFSET_VALUES)
-OMEGACHAD_LONER_MARGIN_VALUES = tuple(
-    step / 100.0 for step in range(5, 20, 2))
+# Omegas-season keepers; the rest of the +0.05..+0.19 sweep was retired.
+OMEGACHAD_LONER_MARGIN_VALUES = (0.05, 0.11)
 OMEGACHAD_LONER_MARGIN_PROFILES = tuple(
     f"Iron OmegaChad Loner +{margin:.2f}"
     for margin in OMEGACHAD_LONER_MARGIN_VALUES)
@@ -903,18 +894,6 @@ def profile_checkpoint_paths(profile_name):
         "Iron OmegaChad": [IRONCLAD_WEIGHTS_PATH],
         "Iron Anchor": [IRONCLAD_WEIGHTS_PATH],
         "Iron Sleuth": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Rush": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Blitz": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Storm": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Surge": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Tempest": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Typhoon": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Hurricane": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Cyclone": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Supercell": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Hypercell": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Firestorm": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Sleuth Cataclysm": [IRONCLAD_WEIGHTS_PATH],
         "Iron Closer": [IRONCLAD_WEIGHTS_PATH],
         "Sleuth Score Closer": [IRONCLAD_WEIGHTS_PATH],
         "Iron Clutch": [IRONCLAD_WEIGHTS_PATH],
@@ -923,8 +902,6 @@ def profile_checkpoint_paths(profile_name):
         "Sleuth Turbo Closer": [IRONCLAD_WEIGHTS_PATH],
         "Sleuth Risk Budget": [IRONCLAD_WEIGHTS_PATH],
         "Monte Prime": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
-        "Iron Solver": [IRONCLAD_WEIGHTS_PATH],
-        "Iron Oracle": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
         "Saboteur": [IRONCLAD_WEIGHTS_PATH],
         "Scoreboard General": [ARBITER_WEIGHTS_PATH],
         "Copycat": [ARBITER_WEIGHTS_PATH, IRONCLAD_WEIGHTS_PATH, KYLE_WEIGHTS_PATH],
@@ -1512,27 +1489,13 @@ AI_PROFILE_CHOICES = {
     "IronChad (Boosted Ironclad)": "Pure Ironclad policy with a deeper AlphaZero search budget for trick play.",
     "Iron OmegaChad (Ultimate Ironclad)": "Pure Ironclad policy with heavily expanded bid, discard, and AlphaZero play search.",
     "Iron Sleuth (Probe-First Router)": "Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied.",
-    "Iron Sleuth Tempest (Aggressive Router)": "Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100).",
-    "Iron Sleuth Hurricane (Aggressive Router)": "Iron Sleuth with a maximum test call threshold (call_margin=-0.130).",
-    "Iron Sleuth Cyclone (Aggressive Router)": "Iron Sleuth with a severe call threshold (call_margin=-0.145).",
-    "Iron Sleuth Supercell (Aggressive Router)": "Iron Sleuth with a frontier aggression threshold (call_margin=-0.160).",
-    "Iron Sleuth Hypercell (Aggressive Router)": "Iron Sleuth with an extreme frontier threshold (call_margin=-0.175).",
-    "Iron Sleuth Firestorm (Aggressive Router)": "Iron Sleuth with a hyper-aggressive threshold (call_margin=-0.190).",
-    "Iron Sleuth Cataclysm (Aggressive Router)": "Iron Sleuth with a max-pressure threshold (call_margin=-0.205).",
     "Iron Caller (Finalist +0.100)": "Iron Sleuth finalist profile mapped to +0.100 bid-margin offset.",
     "Iron Baller (Finalist +0.160)": "Iron Sleuth finalist profile mapped to +0.160 bid-margin offset.",
     "Iron Closer (Score-Aware Router)": "Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable.",
     "Iron Clutch (Selective Deepening)": "Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks.",
     "Iron Endgame Edge (Score-Tuned Endgame)": "Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior.",
     "Monte Prime (Council MCTS Hybrid)": "Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance.",
-    "Iron Solver (Endgame Hybrid)": "Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks.",
-    "Iron Oracle (Bid-Arbitration Hybrid)": "Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play.",
 }
-for offset in SLEUTH_MARGIN_OFFSET_VALUES:
-    profile_name = f"Iron Sleuth +{offset:.3f}"
-    AI_PROFILE_CHOICES[f"{profile_name} (Bid Margin Offset)"] = (
-        "Iron Sleuth with extra call aggression by reducing call_margin by "
-        f"{offset:.3f} from the base Sleuth margin.")
 for margin in OMEGACHAD_LONER_MARGIN_VALUES:
     profile_name = f"Iron OmegaChad Loner +{margin:.2f}"
     AI_PROFILE_CHOICES[f"{profile_name} (Loner Calibration)"] = (
@@ -1550,11 +1513,6 @@ LEGACY_PROFILE_FALLBACKS = {
     # Deactivated profiles map to supported equivalents for old saves.
     "Iron Anchor": "Ironclad",
     "Copycat": "Arbiter",
-    "Iron Sleuth Blitz": "Iron Sleuth Rush",
-    "Iron Sleuth Storm": "Iron Sleuth Tempest",
-    "Iron Sleuth Surge": "Iron Sleuth Tempest",
-    "Iron Sleuth Rush": "Iron Sleuth Tempest",
-    "Iron Sleuth Typhoon": "Iron Sleuth Hurricane",
     "Sleuth Score Closer": "Iron Clutch",
     "Sleuth Risk Budget": "Iron Clutch",
     "Sleuth Endgame Turbo": "Iron Clutch",
@@ -1563,21 +1521,43 @@ LEGACY_PROFILE_FALLBACKS = {
     "Iron Sleuth +0.160": "Iron Baller",
     "Iron Sleuth Caller": "Iron Caller",
     "Iron Sleuth Baller": "Iron Baller",
+    # Retired aggression sweep: the storm ladder and every bid-margin offset
+    # collapse onto the two finalists the sweep actually promoted.
+    "Iron Sleuth Blitz": "Iron Caller",
+    "Iron Sleuth Rush": "Iron Caller",
+    "Iron Sleuth Storm": "Iron Baller",
+    "Iron Sleuth Surge": "Iron Baller",
+    "Iron Sleuth Typhoon": "Iron Baller",
+    "Iron Sleuth Tempest": "Iron Baller",
+    "Iron Sleuth Hurricane": "Iron Baller",
+    "Iron Sleuth Cyclone": "Iron Baller",
+    "Iron Sleuth Supercell": "Iron Baller",
+    "Iron Sleuth Hypercell": "Iron Baller",
+    "Iron Sleuth Firestorm": "Iron Baller",
+    "Iron Sleuth Cataclysm": "Iron Baller",
+    "Iron Solver": "Monte Prime",
+    "Iron Oracle": "Monte Prime",
+    # Retired Omegas loner sweep entries map to the nearest surviving margin.
+    "Iron OmegaChad Loner +0.07": "Iron OmegaChad Loner +0.05",
+    "Iron OmegaChad Loner +0.09": "Iron OmegaChad Loner +0.11",
+    "Iron OmegaChad Loner +0.13": "Iron OmegaChad Loner +0.11",
+    "Iron OmegaChad Loner +0.15": "Iron OmegaChad Loner +0.11",
+    "Iron OmegaChad Loner +0.17": "Iron OmegaChad Loner +0.11",
+    "Iron OmegaChad Loner +0.19": "Iron OmegaChad Loner +0.11",
 }
+for _retired_offset in range(2, 31, 2):
+    LEGACY_PROFILE_FALLBACKS.setdefault(
+        f"Iron Sleuth +{_retired_offset / 100.0:.3f}",
+        "Iron Caller" if _retired_offset <= 12 else "Iron Baller")
 NEURAL_PROFILES = {
     "Arbiter", "Ironclad", "Kyle", "The Closer",
     "Unanimous Council", "Risk Manager",
     "Wildcard",
     "Iron Monte", "Omega Iron Monte", "IronChad", "Iron OmegaChad",
     *OMEGACHAD_LONER_MARGIN_PROFILES, "Iron Sleuth",
-    "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
-    "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
-    "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
-    "Iron Sleuth Cataclysm",
     "Iron Caller", "Iron Baller",
-    *SLEUTH_MARGIN_OFFSET_PROFILES,
     "Iron Closer", "Iron Clutch", "Iron Endgame Edge",
-    "Monte Prime", "Iron Solver", "Iron Oracle",
+    "Monte Prime",
 }
 IRON_MONTE_SEARCH_PROFILES = {
     "Iron Monte", "Iron Caller", "Iron Baller", "Omega Iron Monte"}
@@ -1626,7 +1606,7 @@ def omega_iron_monte_play_iterations(base_iterations, completed_tricks):
 
 HYBRID_MCTS_PROFILES = {
     *IRON_MONTE_SEARCH_PROFILES,
-    "Monte Prime", "Iron Solver", "Iron Oracle",
+    "Monte Prime",
     "Iron Clutch", "Iron Endgame Edge"}
 HEADLESS_MCTS_PROFILES = {
     "The MC",
@@ -1637,6 +1617,8 @@ TOURNAMENT_PROFILES = tuple(
 HEADLESS_TOURNAMENT_PROFILES = tuple(
     profile for profile in TOURNAMENT_PROFILES
     if profile in NEURAL_PROFILES or profile in HEADLESS_MCTS_PROFILES)
+# Seats the human does not control default to this profile.
+DEFAULT_TABLE_PROFILE = "IronChad"
 
 
 def choose_iron_profile_move(profile, ranked_moves, tie_margin, score_gap=0,
@@ -1686,7 +1668,8 @@ def sanitize_profile_preferences(settings):
     for index in range(3):
         raw = players[index] if index < len(players) else None
         clean_name = normalize_profile_name(
-            str(raw).split(" (")[0] if isinstance(raw, str) else None)
+            str(raw).split(" (")[0] if isinstance(raw, str) else None,
+            default=DEFAULT_TABLE_PROFILE)
         clean_players.append(profile_label_from_name(clean_name))
     sanitized["players"] = clean_players
 
@@ -1719,10 +1702,6 @@ def load_active_tournament_profiles(default_profiles=None):
         return profiles
     filtered = [
         profile for profile in active_profiles if profile in TOURNAMENT_PROFILES]
-    if not settings.get("hybrid_profiles_v1_seen", False):
-        for profile in ("Monte Prime", "Iron Solver"):
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
     if not settings.get("ironchad_v1_seen", False):
         if "IronChad" in profiles and "IronChad" not in filtered:
             filtered.append("IronChad")
@@ -1736,9 +1715,11 @@ def load_active_tournament_profiles(default_profiles=None):
     if not settings.get("omega_iron_monte_v1_seen", False):
         if "Omega Iron Monte" in profiles and "Omega Iron Monte" not in filtered:
             filtered.append("Omega Iron Monte")
-    if not settings.get("iron_oracle_v1_seen", False):
-        if "Iron Oracle" in profiles and "Iron Oracle" not in filtered:
-            filtered.append("Iron Oracle")
+    # Monte Prime outlived the hybrids it shipped with, so it is reintroduced
+    # under a fresh flag rather than the exhausted hybrid_profiles_v1 one.
+    if not settings.get("monte_prime_v2_seen", False):
+        if "Monte Prime" in profiles and "Monte Prime" not in filtered:
+            filtered.append("Monte Prime")
     if not settings.get("iron_profiles_v1_seen", False):
         for profile in ("Iron Sleuth", "Iron Closer"):
             if profile in profiles and profile not in filtered:
@@ -1748,34 +1729,6 @@ def load_active_tournament_profiles(default_profiles=None):
                 "Iron Clutch", "Iron Endgame Edge"):
             if profile in profiles and profile not in filtered:
                 filtered.append(profile)
-    if not settings.get("sleuth_aggressive_v2_seen", False):
-        for profile in ("Iron Sleuth Tempest",):
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
-    if not settings.get("sleuth_aggressive_v3_seen", False):
-        for profile in ("Iron Sleuth Hurricane",):
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
-    if not settings.get("sleuth_aggressive_v4_seen", False):
-        for profile in ("Iron Sleuth Cyclone", "Iron Sleuth Supercell"):
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
-    if not settings.get("sleuth_aggressive_v5_seen", False):
-        for profile in (
-                "Iron Sleuth Hypercell",
-                "Iron Sleuth Firestorm",
-                "Iron Sleuth Cataclysm"):
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
-    if not settings.get("sleuth_aggressive_offsets_v1_seen", False):
-        for profile in SLEUTH_MARGIN_OFFSET_PROFILES:
-            if profile in profiles and profile not in filtered:
-                filtered.append(profile)
-    allowed_sleuth_profiles = set(SLEUTH_FINALIST_PROFILES)
-    filtered = [
-        profile for profile in filtered
-        if not str(profile).startswith("Iron Sleuth ")
-        or profile in allowed_sleuth_profiles]
     for profile in SLEUTH_FINALIST_PROFILES:
         if profile in profiles and profile not in filtered:
             filtered.append(profile)
@@ -1802,30 +1755,6 @@ def random_tournament_matchup(
     return chooser(matchups)
 
 
-def choose_iron_oracle_bid(legal_actions, policy_probs, search_visits):
-    """Keep Ironclad's policy choice unless a close decision gets a strong
-    contradictory verdict from deeper bid search."""
-    policy_ranked = sorted(
-        legal_actions, key=lambda action: policy_probs[action], reverse=True)
-    primary = policy_ranked[0]
-    policy_gap = (
-        float(policy_probs[primary] - policy_probs[policy_ranked[1]])
-        if len(policy_ranked) > 1 else 1.0)
-    if policy_gap > 0.10 or not search_visits:
-        return primary
-
-    search_ranked = sorted(
-        search_visits, key=search_visits.get, reverse=True)
-    searched = search_ranked[0]
-    search_gap = (
-        float(search_visits[searched] - search_visits[search_ranked[1]])
-        if len(search_ranked) > 1 else float(search_visits[searched]))
-    if (searched != primary
-            and search_visits[searched] >= 0.55
-            and search_gap >= 0.15):
-        return searched
-    return primary
-
 def resolve_tournament_seed(
         use_random_seed, entered_seed, generator=None):
     if use_random_seed:
@@ -1845,15 +1774,9 @@ PROFILE_CATEGORIES = {
     "Risk Manager": "Router",
     "Iron Monte": "Hybrid", "Omega Iron Monte": "Hybrid",
     "IronChad": "Base Neural", "Iron OmegaChad": "Base Neural", "Monte Prime": "Hybrid",
-    "Iron Solver": "Hybrid", "Iron Oracle": "Hybrid",
     "Iron Sleuth": "Router",
-    "Iron Sleuth Tempest": "Router",
-    "Iron Sleuth Hurricane": "Router",
-    "Iron Sleuth Cyclone": "Router",
-    "Iron Sleuth Supercell": "Router",
-    "Iron Sleuth Hypercell": "Router",
-    "Iron Sleuth Firestorm": "Router",
-    "Iron Sleuth Cataclysm": "Router",
+    "Iron Caller": "Router",
+    "Iron Baller": "Router",
     "Iron Closer": "Router",
     "Iron Clutch": "Hybrid",
     "Iron Endgame Edge": "Hybrid",
@@ -2956,7 +2879,7 @@ class SettingsStore:
         "hint_search": "Balanced", "table_search": "Balanced",
         "engine_speed": "Grandmaster (100,000 Iterations)",
         "drill": "Standard Match",
-        "players": ["Arbiter (Vanilla Neural)"] * 3,
+        "players": [profile_label_from_name(DEFAULT_TABLE_PROFILE)] * 3,
         "favorites": ["Arbiter", "Ironclad", "Kyle", "Unanimous Council"],
         "large_cards": False, "high_contrast": False,
         "reduced_motion": False, "presets": {},
@@ -3729,14 +3652,11 @@ class ISMCTS_Multiprocessing_Agent:
         if profile in HYBRID_MCTS_PROFILES:
             base_iterations = (ui_game.hint_neural_play_iters if player_idx == 0
                                else ui_game.table_neural_play_iters)
-            if profile in {"Monte Prime", "Iron Oracle"}:
+            if profile == "Monte Prime":
                 iterations = max(base_iterations * 3, 600)
             elif (profile in {"Iron Clutch", "Iron Endgame Edge"}
                   and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
                 iterations = max(base_iterations * 5, 1000)
-            elif (profile == "Iron Solver"
-                  and ui_game.team1_tricks + ui_game.team2_tricks >= 3):
-                iterations = max(base_iterations * 6, 1200)
             elif profile == "Omega Iron Monte":
                 iterations = omega_iron_monte_play_iterations(
                     base_iterations,
@@ -3882,7 +3802,12 @@ class EuchreGame(tk.Tk):
         self.trainer_mistakes = []; self.cached_hint = None
         self.hand_bid_feedback = ""
         
-        self.ai_profiles = {"0": "Human", "1": "Arbiter", "2": "Arbiter", "3": "Arbiter"}
+        self.ai_profiles = {
+            "0": "Human",
+            "1": DEFAULT_TABLE_PROFILE,
+            "2": DEFAULT_TABLE_PROFILE,
+            "3": DEFAULT_TABLE_PROFILE,
+        }
         
         self.hand_expected_tricks = -1; self.hand_accuracy_sum = 0.0; self.hand_accuracy_count = 0; self.trick_snapshots = {} 
         
@@ -3956,11 +3881,12 @@ class EuchreGame(tk.Tk):
             restored_value = restored_profiles.get(seat_key)
             self.ai_profiles[seat_key] = normalize_profile_name(
                 restored_value,
-                default="Arbiter",
+                default=DEFAULT_TABLE_PROFILE,
                 allow_human=(seat == 0),
             )
         for seat in (1, 2, 3):
-            PLAYER_NAMES[seat] = self.ai_profiles.get(str(seat), "Arbiter")
+            PLAYER_NAMES[seat] = self.ai_profiles.get(
+                str(seat), DEFAULT_TABLE_PROFILE)
         self.active_drill = state.get("active_drill", "Standard Match")
         self.tournament_state = payload.get("tournament_state")
         self.human_league_game_active = bool(
@@ -4392,13 +4318,13 @@ class EuchreGame(tk.Tk):
             return self.unanimous_council_brain
         if profile == "Risk Manager":
             return self.ironclad_brain
-        if profile in {"IronChad", *IRON_MONTE_SEARCH_PROFILES, "Iron Solver"} or is_omegachad_profile(profile):
+        if profile in {"IronChad", *IRON_MONTE_SEARCH_PROFILES} or is_omegachad_profile(profile):
             return self.ironclad_brain
         if profile in {
             "Iron Sleuth", "Iron Closer",
             "Iron Clutch", "Iron Endgame Edge"}:
             return self.ironclad_brain
-        if profile in {"Monte Prime", "Iron Oracle"}:
+        if profile == "Monte Prime":
             if self.game_state in {"bidding_r1", "bidding_r2", "discarding"}:
                 return self.ironclad_brain
             return self.unanimous_council_brain
@@ -4844,7 +4770,9 @@ class EuchreGame(tk.Tk):
         tk.Label(dialog, text="Bot Euchre", font=("Arial", 20, "bold"), bg=setup_bg, fg=setup_gold).pack(pady=10)
 
         ai_choices = active_profile_choice_labels()
-        default_label = ai_choices[0]
+        default_label = profile_label_from_name(DEFAULT_TABLE_PROFILE)
+        if default_label not in ai_choices:
+            default_label = ai_choices[0]
         profile_description_var = tk.StringVar(
             value=AI_PROFILE_CHOICES[default_label])
         tk.Label(
@@ -6055,9 +5983,7 @@ class EuchreGame(tk.Tk):
             label = self._profile_display_label(profile)
             description = AI_PROFILE_CHOICES.get(label, "")
             route = "Pure MCTS" if profile == "The MC" else (
-                "Hybrid: conservative bid arbitration + Council-guided deep MCTS" if profile == "Iron Oracle" else
                 "Hybrid: Ironclad contract + Council-guided deep MCTS" if profile == "Monte Prime" else
-                "Hybrid: Ironclad contract + deep endgame MCTS" if profile == "Iron Solver" else
                 "Hybrid: Sleuth score-aware policy with selective endgame deepening" if profile == "Iron Endgame Edge" else
                 "Hybrid: Sleuth policy with selective endgame deepening" if profile == "Iron Clutch" else
                 "Hybrid: Ironclad contract + guided MCTS play" if profile == "Iron Monte" else
@@ -6410,7 +6336,7 @@ class EuchreGame(tk.Tk):
             padx=10, pady=8)
         setup.pack(fill=tk.X, padx=20, pady=8)
         name_var = tk.StringVar(value="My League Season")
-        partner_var = tk.StringVar(value="Arbiter")
+        partner_var = tk.StringVar(value=DEFAULT_TABLE_PROFILE)
         games_var = tk.IntVar(value=2)
         playoff_var = tk.IntVar(value=4)
         seed_var = tk.StringVar(value=str(random.SystemRandom().randrange(
@@ -8441,20 +8367,6 @@ class EuchreGame(tk.Tk):
             profile = sleuth_base_profile
         if profile == "Iron Sleuth":
             return -0.025 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Tempest":
-            return -0.100 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Hurricane":
-            return -0.130 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Cyclone":
-            return -0.145 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Supercell":
-            return -0.160 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Hypercell":
-            return -0.175 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Firestorm":
-            return -0.190 - sleuth_margin_offset, -0.01
-        if profile == "Iron Sleuth Cataclysm":
-            return -0.205 - sleuth_margin_offset, -0.01
         if profile == "Iron Closer":
             if score_gap >= 2 or own_score >= 8:
                 return -0.03, -0.01
@@ -8495,34 +8407,6 @@ class EuchreGame(tk.Tk):
         # continuations. The most-visited action wins - identical to how bids are
         # selected during self-play generation.
         try:
-            if profile == "Iron Oracle":
-                passed_seats = self._gui_passed_seats()
-                bid_tensor = encode_bid_state(
-                    list(self.hands[player_idx]), player_idx, self.up_card,
-                    self.dealer_idx, round_num, passed_seats,
-                    self.team1_score, self.team2_score)
-                policy_probs, _ = self._eval_neural_brain(
-                    bid_tensor, neural_brain)
-                visit_dict, root_q = run_bid_mcts(
-                    list(self.hands[player_idx]), self.up_card, self.dealer_idx,
-                    player_idx, round_num, passed_seats,
-                    self.team1_score, self.team2_score,
-                    lambda tensor: self._eval_neural_brain(tensor, neural_brain),
-                    rollouts=max(rollouts * 3, 300),
-                    known_hands=(self._get_neural_known_hands(player_idx)
-                                 if known_hands is None else known_hands),
-                    call_margin=call_margin, loner_margin=loner_margin)
-                legal_actions = legal_bid_actions(
-                    round_num, self.up_card.suit, is_stuck)
-                best_action = choose_iron_oracle_bid(
-                    legal_actions, policy_probs, visit_dict)
-                confidence = visit_dict.get(best_action, 0.0) * 100.0
-                est_points = root_q * 4.0
-                if best_action == BID_PASS:
-                    return ("Pass", suits_to_check[0], False, confidence,
-                            est_points, is_stuck)
-                suit, is_loner = bid_action_details(best_action)
-                return ("Call", suit, is_loner, confidence, est_points, is_stuck)
             visit_dict, root_q = run_bid_mcts(
                 list(self.hands[player_idx]), self.up_card, self.dealer_idx,
                 player_idx, round_num, self._gui_passed_seats(),
@@ -10297,14 +10181,11 @@ class EuchreGame(tk.Tk):
         prof = self.ai_profiles.get(str(player_idx), "Human")
         if prof in HYBRID_MCTS_PROFILES:
             base_iterations = self.table_neural_play_iters
-            if prof in {"Monte Prime", "Iron Oracle"}:
+            if prof == "Monte Prime":
                 iterations = max(base_iterations * 3, 600)
             elif (prof in {"Iron Clutch", "Iron Endgame Edge"}
                   and self.team1_tricks + self.team2_tricks >= 3):
                 iterations = max(base_iterations * 5, 1000)
-            elif (prof == "Iron Solver"
-                  and self.team1_tricks + self.team2_tricks >= 3):
-                iterations = max(base_iterations * 6, 1200)
             elif prof in IRON_MONTE_SEARCH_PROFILES:
                 iterations = iron_monte_play_iterations(
                     base_iterations,

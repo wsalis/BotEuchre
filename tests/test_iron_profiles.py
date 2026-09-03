@@ -120,15 +120,9 @@ class TestIronProfiles(unittest.TestCase):
         gui.all_profiles = ["Arbiter", "Ironclad", "IronChad"]
         gui.lab_settings = {
             "active_profiles": ["Arbiter", "Ironclad"],
-            "hybrid_profiles_v1_seen": True,
-            "iron_oracle_v1_seen": True,
+            "monte_prime_v2_seen": True,
             "iron_profiles_v1_seen": True,
             "sleuth_variants_v1_seen": True,
-            "sleuth_aggressive_v2_seen": True,
-            "sleuth_aggressive_v3_seen": True,
-            "sleuth_aggressive_v4_seen": True,
-            "sleuth_aggressive_v5_seen": True,
-            "sleuth_aggressive_offsets_v1_seen": True,
         }
 
         self.assertIn("IronChad", gui._load_active_profiles())
@@ -194,7 +188,10 @@ class TestIronProfiles(unittest.TestCase):
         )
 
     def test_omegachad_loner_profiles_preserve_omega_compute_and_normal_calls(self):
-        self.assertEqual(len(OMEGACHAD_LONER_MARGIN_PROFILES), 8)
+        self.assertEqual(
+            OMEGACHAD_LONER_MARGIN_PROFILES,
+            ("Iron OmegaChad Loner +0.05", "Iron OmegaChad Loner +0.11"),
+        )
         for profile_name, margin in zip(
                 OMEGACHAD_LONER_MARGIN_PROFILES,
                 OMEGACHAD_LONER_MARGIN_VALUES):
@@ -249,6 +246,22 @@ class TestIronProfiles(unittest.TestCase):
             normalize_profile_name("Sleuth Endgame Turbo"),
             "Iron Clutch",
         )
+
+    def test_retired_sweep_profiles_collapse_onto_survivors(self):
+        for retired in (
+                "Iron Sleuth Tempest", "Iron Sleuth Hurricane",
+                "Iron Sleuth Cyclone", "Iron Sleuth Supercell",
+                "Iron Sleuth Hypercell", "Iron Sleuth Firestorm",
+                "Iron Sleuth Cataclysm", "Iron Sleuth +0.300"):
+            self.assertEqual(normalize_profile_name(retired), "Iron Baller")
+        self.assertEqual(normalize_profile_name("Iron Sleuth +0.020"), "Iron Caller")
+        self.assertEqual(normalize_profile_name("Iron Sleuth Blitz"), "Iron Caller")
+        for retired in ("Iron Solver", "Iron Oracle"):
+            self.assertEqual(normalize_profile_name(retired), "Monte Prime")
+        for retired in (
+                "Iron OmegaChad Loner +0.13", "Iron OmegaChad Loner +0.19"):
+            self.assertEqual(
+                normalize_profile_name(retired), "Iron OmegaChad Loner +0.11")
 
     def test_new_profiles_have_checkpoint_paths(self):
         for profile_name in (

@@ -33,7 +33,7 @@ from BotEuchreGUI import (
     SimState, Card, CheemsNeuralNet, encode_state_to_tensor,
     ALL_DECK_KEYS, SUITS_T, RANKS_T, SAME_COLOR_T, HAS_TORCH,
     POLICY_SIZE, BID_PASS, BID_CALL_BASE, BID_ALONE_BASE,
-    run_auction, legal_bid_actions, choose_iron_oracle_bid,
+    run_auction, legal_bid_actions,
     bid_action_details, choose_dealer_discard, encode_bid_state, get_tactical_search_moves,
     run_bid_mcts, choose_iron_profile_move, parse_sleuth_margin_adjustment,
     is_sleuth_profile, is_omegachad_profile, omegachad_loner_margin,
@@ -48,11 +48,20 @@ ALL_DECK_KEYS_MAP = {key: idx for idx, key in enumerate(ALL_DECK_KEYS)}
 HEADLESS_PROFILE_FALLBACKS = {
     "Iron Anchor": "Ironclad",
     "Copycat": "Arbiter",
-    "Iron Sleuth Blitz": "Iron Sleuth Rush",
-    "Iron Sleuth Storm": "Iron Sleuth Tempest",
-    "Iron Sleuth Surge": "Iron Sleuth Tempest",
-    "Iron Sleuth Rush": "Iron Sleuth Tempest",
-    "Iron Sleuth Typhoon": "Iron Sleuth Hurricane",
+    "Iron Sleuth Blitz": "Iron Caller",
+    "Iron Sleuth Rush": "Iron Caller",
+    "Iron Sleuth Storm": "Iron Baller",
+    "Iron Sleuth Surge": "Iron Baller",
+    "Iron Sleuth Typhoon": "Iron Baller",
+    "Iron Sleuth Tempest": "Iron Baller",
+    "Iron Sleuth Hurricane": "Iron Baller",
+    "Iron Sleuth Cyclone": "Iron Baller",
+    "Iron Sleuth Supercell": "Iron Baller",
+    "Iron Sleuth Hypercell": "Iron Baller",
+    "Iron Sleuth Firestorm": "Iron Baller",
+    "Iron Sleuth Cataclysm": "Iron Baller",
+    "Iron Solver": "Monte Prime",
+    "Iron Oracle": "Monte Prime",
     "Sleuth Score Closer": "Iron Clutch",
     "Sleuth Risk Budget": "Iron Clutch",
     "Sleuth Endgame Turbo": "Iron Clutch",
@@ -385,8 +394,7 @@ def headless_profile_brain(profile_name, seat, t1_score, t2_score,
         return "Arbiter"
     if profile_name == "IronChad" or is_omegachad_profile(profile_name):
         return "Ironclad"
-    if profile_name in {
-            *IRON_MONTE_SEARCH_PROFILES, "Iron Solver", "Iron Oracle"}:
+    if profile_name in {*IRON_MONTE_SEARCH_PROFILES}:
         return "Ironclad"
     if is_sleuth_profile(profile_name) or profile_name in {
             "Iron Closer", "Iron Clutch", "Iron Endgame Edge"}:
@@ -428,20 +436,6 @@ def headless_bid_margins(profile_name, seat, round_num, dealer_idx,
         return 0.0, calibrated_loner_margin
     if profile_name == "Iron Sleuth":
         return -0.025 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Tempest":
-        return -0.100 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Hurricane":
-        return -0.130 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Cyclone":
-        return -0.145 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Supercell":
-        return -0.160 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Hypercell":
-        return -0.175 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Firestorm":
-        return -0.190 - sleuth_margin_offset, -0.01
-    if profile_name == "Iron Sleuth Cataclysm":
-        return -0.205 - sleuth_margin_offset, -0.01
     if profile_name == "Iron Closer":
         score_gap = own_score - opponent_score
         if score_gap >= 2 or own_score >= 8:
@@ -633,18 +627,6 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
             rollouts = iron_omegachad_bid_rollouts(rollouts)
         call_margin, loner_margin = headless_bid_margins(
             profile, seat, round_num, dealer_idx, t1_score, t2_score)
-        if profile == "Iron Oracle":
-            tensor = encode_bid_state(
-                hands[seat], seat, up_card, dealer_idx,
-                round_num, passed_seats, t1_score, t2_score)
-            policy_probs, _ = nn_eval_for(brain_id)(tensor)
-            visits, _ = run_bid_mcts(
-                hands[seat], up_card, dealer_idx, seat, round_num, passed_seats,
-                t1_score, t2_score, nn_eval_for(brain_id),
-                rollouts=max(rollouts * 3, 300), known_hands=None,
-                call_margin=call_margin, loner_margin=loner_margin)
-            return choose_iron_oracle_bid(
-                legal_actions, policy_probs, visits)
         if rollouts > 0:
             visits, _ = run_bid_mcts(
                 hands[seat], up_card, dealer_idx, seat, round_num, passed_seats,
@@ -748,7 +730,7 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
                     active_iterations = iron_monte_play_iterations(
                         active_iterations,
                         sim.team1_tricks + sim.team2_tricks)
-                elif active_profile in {"Monte Prime", "Iron Oracle"}:
+                elif active_profile == "Monte Prime":
                     # Keep Ironclad's contract discipline, then use the Council
                     # ensemble as policy/value guidance for a deeper play search.
                     active_iterations = max(active_iterations * 3, 600)
@@ -762,18 +744,11 @@ def play_dealt_hand(deal, gpu_pipe, iterations, current_is_team1, bid_rollouts=N
                     active_iterations = max(
                         active_iterations * (5 if completed_tricks >= 3 else 2),
                         1000 if completed_tricks >= 3 else 400)
-                elif active_profile == "Iron Solver":
-                    # Search like Iron Monte early, then spend heavily once only
-                    # two tricks remain and the hidden-card space is much smaller.
-                    completed_tricks = sim.team1_tricks + sim.team2_tricks
-                    active_iterations = max(
-                        active_iterations * (6 if completed_tricks >= 3 else 2),
-                        1200 if completed_tricks >= 3 else 400)
                 if active_profile == "Unanimous Council":
                     active_iterations *= 2
             active_brain = (
                 "Unanimous Council"
-                if active_profile in {"Monte Prime", "Iron Oracle"}
+                if active_profile == "Monte Prime"
                 else brain_for_seat(sim.current_turn, caller_idx))
 
             chosen_move = run_eval_mcts(

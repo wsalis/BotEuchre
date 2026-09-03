@@ -190,47 +190,63 @@ and provenance summary.
 
 ## Active Bot Roster
 
-The public release currently exposes the following active bot roster. Profiles can
-control table seats, provide advice through **Ask an AI**, or take over the human
-seat through **Autoplay**. Legacy aliases and retired experimental profiles are
-intentionally omitted from this public README.
+The public release exposes 21 active profiles. Every profile listed here is
+selectable everywhere: it can control table seats, provide advice through
+**Ask an AI**, take over the human seat through **Autoplay**, and be entered in
+the Tournament Lab or headless evaluation. Legacy aliases and retired
+experimental profiles are intentionally omitted from this public README.
+
+### Base Neural
 
 | Profile | Description |
 |---|---|
 | Arbiter | The balanced Gen50 neural checkpoint with standard AlphaZero search. |
 | Ironclad | The frozen conservative checkpoint, favoring disciplined calls and lower euchre risk. |
 | Kyle | The aggressive checkpoint, willing to call thinner hands and press scoring chances. |
-| The Closer | Uses Ironclad while leading or near victory, Kyle when trailing, and Arbiter in balanced games. |
-| Unanimous Council | Reinforces moves all three neural brains independently favor and doubles ensemble search depth. |
-| Risk Manager | Uses Ironclad evaluations and takes the safer alternative when the top two search choices are nearly tied. |
-| Wildcard | Chooses Arbiter, Ironclad, or Kyle once per hand and keeps that identity for the full hand. |
-| The MC | Uses information-set Monte Carlo tree search without a neural checkpoint. |
-| Iron Monte | Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play. |
-| Omega Iron Monte | A tuned Iron Monte variant with deeper midgame and endgame search. |
 | IronChad | Pure Ironclad policy with a deeper AlphaZero trick-play search budget. |
 | Iron OmegaChad | Pure Ironclad policy with heavily expanded bid, discard, and AlphaZero play search. |
-| Iron OmegaChad Loner +0.05 through +0.19 | OmegaChad variants with identical normal-call and play behavior, calibrated by their loner-selection margin. |
+| Iron OmegaChad Loner +0.05 | OmegaChad with a +0.05 loner-selection margin: the higher-volume loner caller. |
+| Iron OmegaChad Loner +0.11 | OmegaChad with a +0.11 loner-selection margin: the more selective loner caller. |
+
+### Routers
+
+| Profile | Description |
+|---|---|
+| The Closer | Uses Ironclad while leading or near victory, Kyle when trailing, and Arbiter in balanced games. |
+| Risk Manager | Uses Ironclad evaluations and takes the safer alternative when the top two search choices are nearly tied. |
 | Iron Sleuth | Uses Ironclad's bidding discipline while preferring the more information-preserving move when the top options are nearly tied. |
-| Iron Sleuth Tempest | Iron Sleuth with an ultra aggressive call threshold (call_margin=-0.100). |
-| Iron Sleuth Hurricane | Iron Sleuth with a maximum test call threshold (call_margin=-0.130). |
-| Iron Sleuth Cyclone | Iron Sleuth with a severe call threshold (call_margin=-0.145). |
-| Iron Sleuth Supercell | Iron Sleuth with a frontier aggression threshold (call_margin=-0.160). |
-| Iron Sleuth Hypercell | Iron Sleuth with an extreme frontier threshold (call_margin=-0.175). |
-| Iron Sleuth Firestorm | Iron Sleuth with a hyper-aggressive threshold (call_margin=-0.190). |
-| Iron Sleuth Cataclysm | Iron Sleuth with a max-pressure threshold (call_margin=-0.205). |
-| Iron Caller | Iron Sleuth finalist profile mapped to +0.100 bid-margin offset. |
-| Iron Baller | Iron Sleuth finalist profile mapped to +0.160 bid-margin offset. |
+| Iron Caller | Iron Sleuth finalist profile mapped to a +0.100 bid-margin offset. |
+| Iron Baller | Iron Sleuth finalist profile mapped to a +0.160 bid-margin offset. |
 | Iron Closer | Stays conservative when behind, then becomes more assertive in closeout spots once the score margin is favorable. |
+
+### Hybrids
+
+| Profile | Description |
+|---|---|
+| Iron Monte | Uses Ironclad for bidding and dealer discard, then switches to deep Ironclad-guided MCTS for trick play. |
+| Omega Iron Monte | A tuned Iron Monte variant with deeper midgame and endgame search. |
 | Iron Clutch | Uses Sleuth-style bidding and tie-break play, then selectively deepens search in the final tricks. |
 | Iron Endgame Edge | Combines Iron Clutch's selective deepening with score-aware tie-break and bidding behavior. |
 | Monte Prime | Uses Ironclad for bidding and discard, then searches play more deeply with Unanimous Council guidance. |
-| Iron Solver | Uses Ironclad for bidding and discard, Iron Monte play early, and solver-style deep search for the final two tricks. |
-| Iron Oracle | Keeps Ironclad's close bidding choices unless deep bid search strongly disagrees, then uses Monte Prime play. |
 
-The adjustable `Iron Sleuth +0.020` through `Iron Sleuth +0.300` family provides
-additional variants with controlled bid-margin offsets for aggression frontier testing.
-The `Iron OmegaChad Loner +0.05` through `Iron OmegaChad Loner +0.19` family
-keeps the base OmegaChad behavior while sweeping loner-selection margins.
+### Ensemble, Learner, and Heuristic
+
+| Profile | Description |
+|---|---|
+| Unanimous Council | Reinforces moves all three neural brains independently favor and doubles ensemble search depth. |
+| Wildcard | Chooses Arbiter, Ironclad, or Kyle once per hand and keeps that identity for the full hand. |
+| The MC | Uses information-set Monte Carlo tree search without a neural checkpoint. |
+
+### Retired Profiles
+
+Saves, journals, and league state that reference retired profiles are remapped
+automatically on load, so older sessions keep working:
+
+| Retired family | Remaps to |
+|---|---|
+| `Iron Sleuth` aggression ladder (Tempest through Cataclysm) and the `Iron Sleuth +0.020`–`+0.300` bid-margin sweep | `Iron Caller` or `Iron Baller`, the two finalists the sweep promoted |
+| `Iron OmegaChad Loner +0.07` through `+0.19` | `Iron OmegaChad Loner +0.05` or `+0.11`, the two Omegas-season finalists |
+| `Iron Solver`, `Iron Oracle` | `Monte Prime` |
 
 ## Playing and Coaching
 
@@ -238,7 +254,7 @@ keeps the base OmegaChad behavior while sweeping loner-selection margins.
 
 Use the **Ask an AI** menu while the human seat has an active bidding, discard, or
 play decision. Any profile can give advice. Neural advisers rank candidate actions,
-while The MC and the three Iron hybrids use information-set search during play.
+while The MC and the Iron hybrids use information-set search during play.
 
 Each consultation is recorded in the session journal. A progress indicator appears
 while longer searches are running.
@@ -437,9 +453,8 @@ schedule, and selectable head-to-head records.
 
 **Headless Tournament Lab** launches as a separate process and compares the same
 neural AI profiles available in the main game rather than archived generations.
-The profile dropdown mirrors the current main-game roster, including base brains,
-routers, hybrid profiles, and the full aggressive Sleuth ladder through
-Iron Sleuth Cataclysm.
+The profile dropdown mirrors the current main-game roster: base brains, routers,
+hybrids, the two Sleuth finalists, and the two OmegaChad loner finalists.
 Each deal is played twice with teams swapped. Runs accept a reproducible seed and
 record profile identities, complete checkpoint SHA-256 provenance, confidence
 intervals, and mirrored-deal metadata in `adhoc_evaluation_history.jsonl`.

@@ -26,7 +26,6 @@ from BotEuchreGUI import (
     DATA_SCHEMA_VERSION, HEADLESS_TOURNAMENT_PROFILES, HELP_TOPICS,
     NODE_ADHOC_HISTORY_PATH, NODE_DEAL_LEDGER_PATH, NODE_ID, NODE_STATE_DIR,
     OMEGACHAD_LONER_MARGIN_PROFILES, SLEUTH_FINALIST_PROFILES,
-    SLEUTH_MARGIN_OFFSET_PROFILES,
     atomic_write_json, load_versioned_list, load_versioned_mapping,
     prepare_node_state, save_versioned_list)
 from adhoc_headless_evaluation import (
@@ -57,11 +56,10 @@ LAB_SETTINGS_DEFAULTS = {
     "round_robin_hands": "200",
     "round_robin_label_prefix": "round_robin",
     "active_profiles": list(HEADLESS_TOURNAMENT_PROFILES),
-    "hybrid_profiles_v1_seen": False,
     "ironchad_v1_seen": False,
     "iron_omegachad_v1_seen": False,
     "omegachad_loner_v1_seen": False,
-    "iron_oracle_v1_seen": False,
+    "monte_prime_v2_seen": False,
     "iron_profiles_v1_seen": False,
     "shared_queue_enabled": False,
     "shared_queue_path": os.path.join(
@@ -740,11 +738,6 @@ class EvalGui(tk.Tk):
         if not isinstance(saved, list):
             return list(self.all_profiles)
         selected = [profile for profile in saved if profile in self.all_profiles]
-        if not self.lab_settings.get("hybrid_profiles_v1_seen", False):
-            for profile in ("Monte Prime", "Iron Solver"):
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["hybrid_profiles_v1_seen"] = True
         if not self.lab_settings.get("ironchad_v1_seen", False):
             if "IronChad" in self.all_profiles and "IronChad" not in selected:
                 selected.append("IronChad")
@@ -758,10 +751,10 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["omegachad_loner_v1_seen"] = True
-        if not self.lab_settings.get("iron_oracle_v1_seen", False):
-            if "Iron Oracle" in self.all_profiles and "Iron Oracle" not in selected:
-                selected.append("Iron Oracle")
-            self.lab_settings["iron_oracle_v1_seen"] = True
+        if not self.lab_settings.get("monte_prime_v2_seen", False):
+            if "Monte Prime" in self.all_profiles and "Monte Prime" not in selected:
+                selected.append("Monte Prime")
+            self.lab_settings["monte_prime_v2_seen"] = True
         if not self.lab_settings.get("iron_profiles_v1_seen", False):
             for profile in ("Iron Sleuth", "Iron Closer"):
                 if profile in self.all_profiles and profile not in selected:
@@ -773,38 +766,6 @@ class EvalGui(tk.Tk):
                 if profile in self.all_profiles and profile not in selected:
                     selected.append(profile)
             self.lab_settings["sleuth_variants_v1_seen"] = True
-        if not self.lab_settings.get("sleuth_aggressive_v2_seen", False):
-            for profile in ("Iron Sleuth Tempest",):
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["sleuth_aggressive_v2_seen"] = True
-        if not self.lab_settings.get("sleuth_aggressive_v3_seen", False):
-            for profile in ("Iron Sleuth Hurricane",):
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["sleuth_aggressive_v3_seen"] = True
-        if not self.lab_settings.get("sleuth_aggressive_v4_seen", False):
-            for profile in ("Iron Sleuth Cyclone", "Iron Sleuth Supercell"):
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["sleuth_aggressive_v4_seen"] = True
-        if not self.lab_settings.get("sleuth_aggressive_v5_seen", False):
-            for profile in (
-                    "Iron Sleuth Hypercell",
-                    "Iron Sleuth Firestorm",
-                    "Iron Sleuth Cataclysm"):
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["sleuth_aggressive_v5_seen"] = True
-        if not self.lab_settings.get("sleuth_aggressive_offsets_v1_seen", False):
-            for profile in SLEUTH_MARGIN_OFFSET_PROFILES:
-                if profile in self.all_profiles and profile not in selected:
-                    selected.append(profile)
-            self.lab_settings["sleuth_aggressive_offsets_v1_seen"] = True
-        selected = [
-            profile for profile in selected
-            if not str(profile).startswith("Iron Sleuth ")
-            or profile in SLEUTH_FINALIST_PROFILES]
         for profile in SLEUTH_FINALIST_PROFILES:
             if profile in self.all_profiles and profile not in selected:
                 selected.append(profile)
@@ -817,7 +778,7 @@ class EvalGui(tk.Tk):
             "Ironclad", *SLEUTH_FINALIST_PROFILES,
             "Iron Clutch", "Iron Endgame Edge",
             "Iron Monte", "IronChad",
-            "Monte Prime", "Iron Solver", "Iron Oracle",
+            "Monte Prime",
             "Risk Manager", "Unanimous Council", "The Closer", "The MC",
             "Arbiter",
         ]
@@ -1533,8 +1494,7 @@ class EvalGui(tk.Tk):
             "stall_minutes": self.stall_minutes_var.get().strip(),
             "randomize_teams": self.randomize_teams_var.get(),
             "active_profiles": list(self.active_profiles),
-            "hybrid_profiles_v1_seen": True,
-            "iron_oracle_v1_seen": True,
+            "monte_prime_v2_seen": True,
             "iron_profiles_v1_seen": True,
             "round_robin_hands": self.round_robin_hands_var.get().strip(),
             "round_robin_label_prefix": self.round_robin_label_prefix_var.get().strip(),
