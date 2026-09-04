@@ -37,6 +37,94 @@ from adhoc_headless_evaluation import (
 from headless_evaluation import headless_bid_margins, headless_profile_brain
 
 
+class _FakeDialog:
+    def __init__(self, screen_w, screen_h):
+        self._screen = (screen_w, screen_h)
+        self.geometry_value = None
+        self.minsize_value = None
+
+    def winfo_screenwidth(self):
+        return self._screen[0]
+
+    def winfo_screenheight(self):
+        return self._screen[1]
+
+    def minsize(self, width, height):
+        self.minsize_value = (width, height)
+
+    def geometry(self, value):
+        self.geometry_value = value
+
+
+def _fake_parent(x=0, y=0, width=1366, height=768, viewable=True):
+    return SimpleNamespace(
+        update_idletasks=lambda: None,
+        winfo_viewable=lambda: viewable,
+        winfo_width=lambda: width,
+        winfo_height=lambda: height,
+        winfo_rootx=lambda: x,
+        winfo_rooty=lambda: y,
+    )
+
+
+def _parse_geometry(value):
+    size, x_text, y_text = value.replace("+", " ").split()
+    width_text, height_text = size.split("x")
+    return int(width_text), int(height_text), int(x_text), int(y_text)
+
+
+class TestToolWindowPlacement(unittest.TestCase):
+    def _place(self, geometry, screen=(1366, 768), parent=None):
+        dialog = _FakeDialog(*screen)
+        EuchreGame._place_tool_window(
+            parent or _fake_parent(), dialog, geometry)
+        return dialog
+
+    def test_oversized_dialog_is_clamped_to_the_screen(self):
+        dialog = self._place("520x860")
+        width, height, _, _ = _parse_geometry(dialog.geometry_value)
+        self.assertEqual(width, 520)
+        self.assertEqual(height, 768 - 120)
+
+    def test_dialog_is_centred_on_the_parent_window(self):
+        dialog = self._place(
+            "620x460", parent=_fake_parent(x=100, y=50, width=1000, height=700))
+        _, _, x, y = _parse_geometry(dialog.geometry_value)
+        self.assertEqual(x, 100 + (1000 - 620) // 2)
+        self.assertEqual(y, 50 + (700 - 460) // 3)
+
+    def test_dialog_never_lands_off_screen(self):
+        for parent in (
+                _fake_parent(x=1300, y=700),
+                _fake_parent(x=-400, y=-300),
+                _fake_parent(viewable=False)):
+            for geometry in ("1280x680", "380x230", "520x860"):
+                dialog = self._place(geometry, parent=parent)
+                width, height, x, y = _parse_geometry(dialog.geometry_value)
+                self.assertGreaterEqual(x, 0)
+                self.assertGreaterEqual(y, 0)
+                self.assertLessEqual(x + width, 1366)
+                self.assertLessEqual(y + height, 768)
+
+    def test_minsize_never_exceeds_the_clamped_size(self):
+        dialog = self._place("380x230")
+        width, height, _, _ = _parse_geometry(dialog.geometry_value)
+        min_width, min_height = dialog.minsize_value
+        self.assertLessEqual(min_width, width)
+        self.assertLessEqual(min_height, height)
+
+    def test_dialogs_that_already_fit_are_left_at_their_authored_size(self):
+        for geometry in ("380x230", "620x460", "1280x680"):
+            dialog = self._place(geometry, screen=(1920, 1080))
+            width, height, _, _ = _parse_geometry(dialog.geometry_value)
+            self.assertEqual(f"{width}x{height}", geometry)
+
+    def test_unparseable_geometry_is_passed_through_untouched(self):
+        dialog = self._place("not-a-geometry")
+        self.assertEqual(dialog.geometry_value, "not-a-geometry")
+        self.assertIsNone(dialog.minsize_value)
+
+
 class TestIronProfiles(unittest.TestCase):
     def test_elo_standings_aggregate_game_stats_without_legacy_guessing(self):
         records = [

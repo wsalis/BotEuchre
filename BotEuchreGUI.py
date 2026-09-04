@@ -4116,6 +4116,34 @@ class EuchreGame(tk.Tk):
             confidence_text = f"{confidence:.0f}%"
         return f"{profile:<14}  {recommendation:<28}  [{confidence_text:>5}]"
 
+    def _place_tool_window(self, dialog, geometry):
+        # Dialog sizes are authored for a large display, so clamp them to the
+        # screen and centre on the main window before mapping.
+        try:
+            width_text, height_text = str(
+                geometry).lower().split("+")[0].split("x")
+            width, height = int(width_text), int(height_text)
+        except (TypeError, ValueError):
+            dialog.geometry(geometry)
+            return
+        screen_w = dialog.winfo_screenwidth()
+        screen_h = dialog.winfo_screenheight()
+        width = min(width, max(320, screen_w - 80))
+        height = min(height, max(240, screen_h - 120))
+        anchor_x = (screen_w - width) // 2
+        anchor_y = (screen_h - height) // 3
+        try:
+            self.update_idletasks()
+            if self.winfo_viewable() and self.winfo_width() > 1:
+                anchor_x = self.winfo_rootx() + (self.winfo_width() - width) // 2
+                anchor_y = self.winfo_rooty() + (self.winfo_height() - height) // 3
+        except tk.TclError:
+            pass
+        x = max(0, min(anchor_x, screen_w - width))
+        y = max(0, min(anchor_y, screen_h - height))
+        dialog.minsize(min(width, 360), min(height, 240))
+        dialog.geometry(f"{width}x{height}+{x}+{y}")
+
     def _new_tool_window(self, key, title, geometry):
         existing = self.open_windows.get(key)
         if existing is not None and existing.winfo_exists():
@@ -4125,10 +4153,11 @@ class EuchreGame(tk.Tk):
             return existing, False
         dialog = tk.Toplevel(self)
         dialog.title(title)
-        dialog.geometry(geometry)
+        self._place_tool_window(dialog, geometry)
         dialog.configure(bg=self.coach_bg_color)
         self.open_windows[key] = dialog
         dialog.protocol("WM_DELETE_WINDOW", lambda: self._close_tool_window(key))
+        dialog.bind("<Escape>", lambda _event: self._close_tool_window(key))
         return dialog, True
 
     def _close_tool_window(self, key):
